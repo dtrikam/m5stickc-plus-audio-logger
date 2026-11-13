@@ -1,0 +1,40 @@
+# Environment files & secrets
+.env
+*.env
+!.env.example
+cloud/.env
+firmware/include/secrets.h
+firmware/src/secrets.h
+*.pem
+*.key
+
+# Build artifacts & local caches
+firmware/.pio/
+.pio/
+__pycache__/
+*.py[cod]
+*$py.class
+.venv/
+venv/
+.pytest_cache/
+
+# Local runtime state, transcripts, audio recordings, backups & logs
+logs/
+backup/
+cloud/recent_audio/
+cloud/*.db
+cloud/*.sqlite
+cloud/*.sqlite3
+cloud/*.log
+*.db
+*.sqlite
+*.sqlite3
+*.log
+*.wav
+*.bin
+
+# OS & editor files
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/

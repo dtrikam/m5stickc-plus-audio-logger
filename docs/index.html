@@ -1,0 +1,2081 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>M5 Audio — Logger &amp; Daily Context Hub</title>
+  <meta name="theme-color" content="#0b1120">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="apple-mobile-web-app-title" content="M5 Audio">
+  <link rel="icon" type="image/png" sizes="64x64" href="images/favicon.png">
+  <link rel="apple-touch-icon" sizes="180x180" href="images/apple_touch_icon.png">
+  <link rel="manifest" href="manifest.json">
+  <style>
+    :root {
+      --bg: #0b1120;
+      --surface: #111827;
+      --surface-elevated: #1e293b;
+      --surface-hover: #26354d;
+      --border: #334155;
+      --text: #f8fafc;
+      --text-muted: #94a3b8;
+      --accent: #38bdf8;
+      --accent-strong: #0284c7;
+      --m5-orange: #f97316;
+      --green: #22c55e;
+      --amber: #f59e0b;
+      --red: #ef4444;
+      --purple: #a855f7;
+      --radius: 14px;
+      --shadow: 0 10px 30px -5px rgb(0 0 0 / 0.45);
+      --target-size: 28px;
+    }
+
+    @media (pointer: coarse) {
+      :root {
+        --target-size: 44px;
+      }
+    }
+
+    *, *::before, *::after {
+      box-sizing: border-box;
+    }
+
+    html, body {
+      margin: 0;
+      padding: 0;
+      width: 100%;
+      max-width: 100%;
+      overflow-x: clip;
+      background-color: var(--bg);
+      color: var(--text);
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Inter, Roboto, sans-serif;
+      line-height: 1.55;
+      -webkit-text-size-adjust: 100%;
+      overflow-wrap: anywhere;
+    }
+
+    body {
+      background:
+        radial-gradient(circle at 15% 0%, rgb(249 115 22 / 0.12), transparent 38%),
+        radial-gradient(circle at 85% 5%, rgb(56 189 248 / 0.12), transparent 40%),
+        var(--bg);
+      min-block-size: 100dvh;
+    }
+
+    h1, h2, h3 {
+      text-wrap: balance;
+    }
+
+    p, li {
+      text-wrap: pretty;
+    }
+
+    img, video, svg {
+      display: block;
+      max-inline-size: 100%;
+      block-size: auto;
+    }
+
+    a {
+      color: var(--accent);
+      text-decoration: none;
+    }
+
+    a:hover {
+      text-decoration: underline;
+    }
+
+    [hidden] {
+      display: none !important;
+    }
+
+    /* Top Sticky Navigation */
+    .topbar {
+      position: sticky;
+      top: 0;
+      z-index: 30;
+      backdrop-filter: blur(14px);
+      -webkit-backdrop-filter: blur(14px);
+      background: rgb(11 17 32 / 0.88);
+      border-bottom: 1px solid var(--border);
+      padding-top: env(safe-area-inset-top, 0px);
+      padding-left: env(safe-area-inset-left, 0px);
+      padding-right: env(safe-area-inset-right, 0px);
+    }
+
+    .topbar-inner {
+      max-width: 1280px;
+      margin: 0 auto;
+      padding: 12px 24px;
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+    }
+
+    .brand {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      min-width: 0;
+      color: var(--text);
+    }
+
+    .brand-icon {
+      width: 36px;
+      height: 36px;
+      border-radius: 9px;
+      box-shadow: 0 2px 8px rgb(0 0 0 / 0.4);
+      flex-shrink: 0;
+    }
+
+    .brand-text {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      gap: 8px;
+      min-width: 0;
+    }
+
+    .brand-badge {
+      background: linear-gradient(135deg, #f97316, #ea580c);
+      color: #fff;
+      font-weight: 800;
+      font-size: 0.74rem;
+      padding: 3px 8px;
+      border-radius: 6px;
+      letter-spacing: 0.04em;
+      white-space: nowrap;
+    }
+
+    .brand-title {
+      font-weight: 700;
+      font-size: 1rem;
+      white-space: nowrap;
+    }
+
+    .nav-links {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 6px;
+      min-width: 0;
+    }
+
+    .nav-links a {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: 5px;
+      color: var(--text-muted);
+      font-size: 0.86rem;
+      font-weight: 600;
+      padding: 6px 12px;
+      border-radius: 8px;
+      min-block-size: 36px;
+      transition: background 0.15s, color 0.15s;
+    }
+
+    .nav-links a:hover {
+      background: var(--surface-elevated);
+      color: var(--text);
+      text-decoration: none;
+    }
+
+    .container {
+      max-width: 1280px;
+      margin: 0 auto;
+      padding: 24px max(20px, env(safe-area-inset-right, 0px)) max(56px, env(safe-area-inset-bottom, 0px)) max(20px, env(safe-area-inset-left, 0px));
+    }
+
+    /* Hero Banner */
+    .hero {
+      background: linear-gradient(135deg, rgb(30 41 59 / 0.92), rgb(17 24 39 / 0.96));
+      border: 1px solid var(--border);
+      border-radius: 18px;
+      padding: 26px;
+      box-shadow: var(--shadow);
+      display: grid;
+      grid-template-columns: minmax(0, 1.35fr) minmax(0, 1fr);
+      gap: 24px;
+      align-items: center;
+      margin-bottom: 20px;
+    }
+
+    .hero > * {
+      min-width: 0;
+      max-width: 100%;
+    }
+
+    @media (max-width: 960px) {
+      .hero {
+        grid-template-columns: minmax(0, 1fr);
+      }
+    }
+
+    .hero-eyebrow {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      font-size: 0.75rem;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+      color: var(--m5-orange);
+      background: rgb(249 115 22 / 0.12);
+      border: 1px solid rgb(249 115 22 / 0.35);
+      padding: 4px 11px;
+      border-radius: 999px;
+      margin-bottom: 12px;
+      max-width: 100%;
+    }
+
+    .hero h1 {
+      margin: 0 0 10px;
+      font-size: clamp(1.4rem, 1.1rem + 1.8vw, 2.15rem);
+      line-height: 1.2;
+    }
+
+    .hero p {
+      margin: 0 0 18px;
+      color: var(--text-muted);
+      font-size: 0.95rem;
+    }
+
+    .hero p code {
+      color: #e2e8f0;
+      background: rgb(15 23 42 / 0.75);
+      padding: 2px 6px;
+      border-radius: 5px;
+      font-size: 0.85em;
+    }
+
+    .hero-actions {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px;
+    }
+
+    .btn {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: 8px;
+      padding: 10px 16px;
+      min-block-size: var(--target-size);
+      border-radius: 10px;
+      font-weight: 600;
+      font-size: 0.88rem;
+      font-family: inherit;
+      border: 1px solid transparent;
+      cursor: pointer;
+      transition: transform 0.12s, background 0.15s, border-color 0.15s;
+      text-decoration: none;
+      text-align: center;
+      max-width: 100%;
+    }
+
+    .btn:hover {
+      text-decoration: none;
+      transform: translateY(-1px);
+    }
+
+    .btn-primary {
+      background: linear-gradient(135deg, #2563eb, #1d4ed8);
+      color: #fff;
+      box-shadow: 0 4px 14px rgb(37 99 235 / 0.35);
+    }
+
+    .btn-orange {
+      background: linear-gradient(135deg, #f97316, #ea580c);
+      color: #fff;
+      box-shadow: 0 4px 14px rgb(249 115 22 / 0.35);
+    }
+
+    .btn-secondary {
+      background: var(--surface-elevated);
+      color: var(--text);
+      border-color: var(--border);
+    }
+
+    .btn-secondary:hover {
+      background: var(--surface-hover);
+    }
+
+    .btn-sm {
+      padding: 6px 12px;
+      font-size: 0.8rem;
+      min-block-size: 36px;
+      border-radius: 8px;
+    }
+
+    /* Live Telemetry Grid in Hero */
+    .telemetry-grid {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 12px;
+      min-width: 0;
+    }
+
+    .stat-card {
+      background: rgb(15 23 42 / 0.82);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 13px 14px;
+      min-width: 0;
+    }
+
+    .stat-label {
+      font-size: 0.72rem;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      color: var(--text-muted);
+      font-weight: 600;
+    }
+
+    .stat-value {
+      font-size: 1.1rem;
+      font-weight: 800;
+      margin-top: 4px;
+      font-variant-numeric: tabular-nums;
+      display: flex;
+      align-items: center;
+      gap: 7px;
+      min-width: 0;
+    }
+
+    .stat-sub {
+      font-size: 0.74rem;
+      color: var(--text-muted);
+      margin-top: 3px;
+    }
+
+    .status-dot {
+      width: 10px;
+      height: 10px;
+      border-radius: 50%;
+      background: var(--amber);
+      display: inline-block;
+      flex-shrink: 0;
+    }
+
+    .status-dot.online {
+      background: var(--green);
+      box-shadow: 0 0 10px var(--green);
+    }
+
+    .status-dot.recording {
+      background: var(--red);
+      box-shadow: 0 0 12px var(--red);
+      animation: pulse-dot 1.2s infinite ease-in-out;
+    }
+
+    .status-dot.offline {
+      background: var(--red);
+    }
+
+    @keyframes pulse-dot {
+      0%, 100% { opacity: 1; transform: scale(1); }
+      50% { opacity: 0.45; transform: scale(0.88); }
+    }
+
+    /* Network & Local Device Guide / Auto-Check Banner */
+    .network-banner {
+      background: rgb(17 24 39 / 0.92);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 16px 18px;
+      margin-bottom: 24px;
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+    }
+
+    .network-banner.local-online {
+      border-color: rgb(34 197 94 / 0.45);
+      background: linear-gradient(135deg, rgb(20 83 45 / 0.22), rgb(17 24 39 / 0.95));
+    }
+
+    .network-banner.local-hidden {
+      border-color: rgb(56 189 248 / 0.35);
+      background: linear-gradient(135deg, rgb(15 23 42 / 0.95), rgb(17 24 39 / 0.95));
+    }
+
+    .network-banner-top {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: flex-start;
+      justify-content: space-between;
+      gap: 12px;
+    }
+
+    .network-banner-title {
+      font-weight: 700;
+      font-size: 0.96rem;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .network-banner-desc {
+      margin: 4px 0 0;
+      font-size: 0.85rem;
+      color: var(--text-muted);
+    }
+
+    .network-pills {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(min(100%, 240px), 1fr));
+      gap: 10px;
+    }
+
+    .net-pill {
+      background: rgb(15 23 42 / 0.75);
+      border: 1px solid rgb(51 65 85 / 0.7);
+      border-radius: 10px;
+      padding: 10px 12px;
+      font-size: 0.8rem;
+      min-width: 0;
+    }
+
+    .net-pill-title {
+      display: block;
+      color: var(--text);
+      font-weight: 700;
+      margin-bottom: 3px;
+      font-size: 0.82rem;
+    }
+
+    .net-pill span {
+      color: var(--text-muted);
+    }
+
+    .network-banner-actions {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      align-items: center;
+    }
+
+    /* Section Headings */
+    .section-header {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: baseline;
+      justify-content: space-between;
+      gap: 10px;
+      margin: 32px 0 14px;
+    }
+
+    .section-header h2 {
+      margin: 0;
+      font-size: clamp(1.12rem, 1rem + 0.6vw, 1.35rem);
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .section-header p {
+      margin: 4px 0 0;
+      color: var(--text-muted);
+      font-size: 0.88rem;
+    }
+
+    /* Quick Links Grid */
+    .links-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(min(100%, 280px), 1fr));
+      gap: 14px;
+      min-width: 0;
+    }
+
+    .link-card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 16px;
+      display: flex;
+      flex-direction: column;
+      justify-content: space-between;
+      gap: 12px;
+      min-width: 0;
+      max-width: 100%;
+      transition: border-color 0.15s, transform 0.15s, background 0.15s;
+    }
+
+    .link-card > * {
+      min-width: 0;
+      max-width: 100%;
+    }
+
+    .link-card:hover {
+      border-color: var(--accent);
+      background: rgb(30 41 59 / 0.65);
+      transform: translateY(-2px);
+      text-decoration: none;
+    }
+
+    .link-card-top {
+      display: flex;
+      align-items: flex-start;
+      justify-content: space-between;
+      gap: 8px;
+      min-width: 0;
+    }
+
+    .link-badge {
+      font-size: 0.68rem;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      padding: 3px 8px;
+      border-radius: 6px;
+      white-space: nowrap;
+      flex-shrink: 0;
+    }
+
+    .badge-cloud { background: rgb(56 189 248 / 0.15); color: #38bdf8; border: 1px solid rgb(56 189 248 / 0.3); }
+    .badge-device { background: rgb(249 115 22 / 0.15); color: #fb923c; border: 1px solid rgb(249 115 22 / 0.3); }
+    .badge-local { background: rgb(34 197 94 / 0.15); color: #4ade80; border: 1px solid rgb(34 197 94 / 0.3); }
+    .badge-doc { background: rgb(168 85 247 / 0.15); color: #c084fc; border: 1px solid rgb(168 85 247 / 0.3); }
+
+    .link-title {
+      font-weight: 700;
+      font-size: 0.98rem;
+      color: var(--text);
+      margin: 0 0 4px;
+      min-width: 0;
+    }
+
+    .link-desc {
+      font-size: 0.84rem;
+      color: var(--text-muted);
+      margin: 0;
+    }
+
+    .link-url {
+      font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+      font-size: 0.74rem;
+      color: var(--accent);
+      background: rgb(15 23 42 / 0.8);
+      padding: 6px 10px;
+      border-radius: 8px;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+      max-width: 100%;
+      border: 1px solid rgb(51 65 85 / 0.6);
+    }
+
+    /* Visual Guides Gallery */
+    .gallery-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(min(100%, 280px), 1fr));
+      gap: 18px;
+      min-width: 0;
+    }
+
+    .gallery-card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      overflow: hidden;
+      box-shadow: var(--shadow);
+      display: flex;
+      flex-direction: column;
+      min-width: 0;
+      max-width: 100%;
+    }
+
+    .gallery-card-wide {
+      grid-column: 1 / -1;
+    }
+
+    .gallery-img-btn {
+      appearance: none;
+      border: 0;
+      padding: 0;
+      margin: 0;
+      background: #050811;
+      cursor: zoom-in;
+      display: block;
+      width: 100%;
+      position: relative;
+      overflow: hidden;
+    }
+
+    .gallery-img-btn img {
+      width: 100%;
+      height: auto;
+      display: block;
+      transition: transform 0.25s ease;
+    }
+
+    .gallery-img-btn:hover img {
+      transform: scale(1.015);
+    }
+
+    .zoom-pill {
+      position: absolute;
+      right: 10px;
+      bottom: 10px;
+      background: rgb(15 23 42 / 0.9);
+      color: var(--text);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 4px 10px;
+      font-size: 0.74rem;
+      font-weight: 600;
+      pointer-events: none;
+    }
+
+    .gallery-body {
+      padding: 16px 18px;
+    }
+
+    .gallery-body h3 {
+      margin: 0 0 6px;
+      font-size: 1.05rem;
+    }
+
+    .gallery-body p {
+      margin: 0;
+      color: var(--text-muted);
+      font-size: 0.88rem;
+    }
+
+    /* Accessible Tabbed Live Explorer */
+    .tabs-shell {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      box-shadow: var(--shadow);
+      overflow: hidden;
+      min-width: 0;
+      max-width: 100%;
+    }
+
+    .tablist-bar {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      border-bottom: 1px solid var(--border);
+      background: rgb(15 23 42 / 0.75);
+      padding: 0 14px;
+      gap: 10px;
+      flex-wrap: wrap;
+      min-width: 0;
+    }
+
+    .tablist {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 4px;
+      min-width: 0;
+      max-width: 100%;
+    }
+
+    [role="tab"] {
+      position: relative;
+      appearance: none;
+      background: transparent;
+      border: 0;
+      color: var(--text-muted);
+      font-family: inherit;
+      font-size: 0.86rem;
+      font-weight: 600;
+      padding: 13px 14px;
+      min-block-size: var(--target-size);
+      cursor: pointer;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: 6px;
+      text-align: center;
+    }
+
+    [role="tab"]:hover {
+      color: var(--text);
+    }
+
+    [role="tab"][aria-selected="true"] {
+      color: var(--accent);
+    }
+
+    [role="tab"][aria-selected="true"]::after {
+      content: "";
+      position: absolute;
+      inset: auto 0 0;
+      border-block-end: 3px solid var(--accent);
+    }
+
+    .tab-panels-grid {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr);
+      min-width: 0;
+    }
+
+    .tab-panels-grid > [role="tabpanel"] {
+      grid-area: 1 / 1;
+      min-width: 0;
+      max-width: 100%;
+    }
+
+    .tabpanel-inner {
+      padding: 18px;
+      min-width: 0;
+      max-width: 100%;
+    }
+
+    /* Filter Bar inside Transcripts Tab */
+    .panel-toolbar {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      justify-content: space-between;
+      gap: 10px;
+      margin-bottom: 12px;
+    }
+
+    .filter-group {
+      display: inline-flex;
+      background: rgb(15 23 42 / 0.85);
+      border: 1px solid var(--border);
+      border-radius: 9px;
+      padding: 3px;
+      gap: 4px;
+    }
+
+    .filter-btn {
+      appearance: none;
+      border: 0;
+      background: transparent;
+      color: var(--text-muted);
+      font-family: inherit;
+      font-size: 0.78rem;
+      font-weight: 600;
+      padding: 5px 11px;
+      border-radius: 6px;
+      cursor: pointer;
+      min-block-size: 32px;
+    }
+
+    .filter-btn.active {
+      background: var(--surface-elevated);
+      color: var(--accent);
+      box-shadow: 0 1px 4px rgb(0 0 0 / 0.3);
+    }
+
+    /* Tables & Log Viewers */
+    .table-scroll {
+      width: 100%;
+      max-width: 100%;
+      max-height: 520px;
+      overflow-y: auto;
+      overflow-x: auto;
+      overscroll-behavior: contain;
+      border-radius: 10px;
+    }
+
+    .data-table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 0.86rem;
+    }
+
+    .data-table th {
+      text-align: left;
+      padding: 10px 12px;
+      background: rgb(15 23 42 / 0.7);
+      color: var(--text-muted);
+      font-size: 0.74rem;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      border-bottom: 1px solid var(--border);
+    }
+
+    .data-table td {
+      padding: 11px 12px;
+      border-bottom: 1px solid rgb(51 65 85 / 0.5);
+      vertical-align: top;
+    }
+
+    .pill-speech {
+      background: rgb(34 197 94 / 0.16);
+      color: #4ade80;
+      border: 1px solid rgb(34 197 94 / 0.35);
+      padding: 2px 8px;
+      border-radius: 999px;
+      font-size: 0.72rem;
+      font-weight: 700;
+      white-space: nowrap;
+    }
+
+    .pill-silence {
+      background: rgb(148 163 184 / 0.14);
+      color: #94a3b8;
+      padding: 2px 8px;
+      border-radius: 999px;
+      font-size: 0.72rem;
+      font-weight: 700;
+      white-space: nowrap;
+    }
+
+    .log-box {
+      background: #060a12;
+      color: #e2e8f0;
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 14px;
+      font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, monospace;
+      font-size: 0.78rem;
+      line-height: 1.5;
+      max-height: 440px;
+      overflow-y: auto;
+      overscroll-behavior: contain;
+      white-space: pre-wrap;
+      word-break: break-word;
+      overflow-wrap: anywhere;
+      max-width: 100%;
+    }
+
+    .memory-box {
+      background: rgb(15 23 42 / 0.65);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 16px;
+      max-width: 100%;
+      overflow-wrap: anywhere;
+    }
+
+    /* CLI Commands Section */
+    .cmd-list {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(min(100%, 280px), 1fr));
+      gap: 14px;
+      min-width: 0;
+    }
+
+    .cmd-card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 14px 16px;
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+      min-width: 0;
+      max-width: 100%;
+    }
+
+    .cmd-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 8px;
+      min-width: 0;
+    }
+
+    .cmd-title {
+      font-weight: 700;
+      font-size: 0.88rem;
+      min-width: 0;
+    }
+
+    .copy-btn {
+      background: var(--surface-elevated);
+      color: var(--text);
+      border: 1px solid var(--border);
+      border-radius: 7px;
+      padding: 5px 11px;
+      font-size: 0.76rem;
+      font-weight: 600;
+      cursor: pointer;
+      flex-shrink: 0;
+      min-block-size: 32px;
+    }
+
+    .copy-btn:hover {
+      background: var(--surface-hover);
+      border-color: var(--accent);
+    }
+
+    .cmd-code {
+      margin: 0;
+      background: #060a12;
+      border: 1px solid rgb(51 65 85 / 0.6);
+      border-radius: 8px;
+      padding: 10px 12px;
+      font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+      font-size: 0.76rem;
+      color: #38bdf8;
+      white-space: pre-wrap;
+      word-break: break-word;
+      overflow-wrap: anywhere;
+      max-width: 100%;
+    }
+
+    /* Native Modal Dialog for Image Zoom */
+    dialog:modal {
+      overscroll-behavior: contain;
+      width: min(94vw, 1400px);
+      max-width: 94vw;
+      max-height: 90dvh;
+      background: var(--surface);
+      color: var(--text);
+      border: 1px solid var(--border);
+      border-radius: 16px;
+      padding: 0;
+      box-shadow: 0 25px 60px rgb(0 0 0 / 0.75);
+    }
+
+    dialog::backdrop {
+      overflow: hidden;
+      overscroll-behavior: contain;
+      background: rgb(3 7 18 / 0.82);
+      backdrop-filter: blur(6px);
+    }
+
+    .dialog-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 10px;
+      padding: 12px 16px;
+      border-bottom: 1px solid var(--border);
+      background: rgb(15 23 42 / 0.92);
+    }
+
+    .dialog-header h2 {
+      margin: 0;
+      font-size: 0.96rem;
+      min-width: 0;
+    }
+
+    .dialog-body {
+      padding: 12px;
+      overflow: auto;
+      max-height: calc(90dvh - 60px);
+      background: #050811;
+    }
+
+    .dialog-body img {
+      width: 100%;
+      height: auto;
+      display: block;
+      border-radius: 8px;
+    }
+
+    .toast {
+      margin-top: 10px;
+      font-size: 0.84rem;
+      color: #4ade80;
+      min-height: 1.3em;
+    }
+
+    /* Mobile-First & Phone Responsiveness (< 720px) */
+    @media (max-width: 720px) {
+      .topbar-inner {
+        padding: 10px 14px;
+        gap: 8px;
+      }
+
+      .brand-title {
+        font-size: 0.92rem;
+      }
+
+      .nav-links {
+        width: 100%;
+        display: grid;
+        grid-template-columns: repeat(4, minmax(0, 1fr));
+        gap: 6px;
+      }
+
+      .nav-links a {
+        background: rgb(30 41 59 / 0.75);
+        border: 1px solid rgb(51 65 85 / 0.65);
+        padding: 6px 4px;
+        font-size: 0.75rem;
+        min-block-size: 38px;
+        text-align: center;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+      }
+
+      .container {
+        padding: 14px max(12px, env(safe-area-inset-right, 0px)) max(44px, env(safe-area-inset-bottom, 0px)) max(12px, env(safe-area-inset-left, 0px));
+      }
+
+      .hero {
+        padding: 16px 14px;
+        gap: 16px;
+        border-radius: 14px;
+        margin-bottom: 16px;
+      }
+
+      .hero-eyebrow {
+        font-size: 0.68rem;
+        padding: 4px 9px;
+      }
+
+      .hero h1 {
+        font-size: 1.32rem;
+      }
+
+      .hero p {
+        font-size: 0.86rem;
+        margin-bottom: 14px;
+      }
+
+      .hero-actions {
+        display: grid;
+        grid-template-columns: minmax(0, 1fr);
+        gap: 8px;
+      }
+
+      .hero-actions .btn {
+        width: 100%;
+      }
+
+      .telemetry-grid {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        gap: 8px;
+      }
+
+      .stat-card {
+        padding: 10px 11px;
+      }
+
+      .stat-value {
+        font-size: 0.92rem !important;
+      }
+
+      .stat-sub {
+        font-size: 0.68rem;
+      }
+
+      .network-banner {
+        padding: 14px;
+        margin-bottom: 20px;
+      }
+
+      .network-pills {
+        grid-template-columns: minmax(0, 1fr);
+        gap: 8px;
+      }
+
+      .network-banner-actions {
+        display: grid;
+        grid-template-columns: minmax(0, 1fr);
+        width: 100%;
+      }
+
+      .network-banner-actions .btn {
+        width: 100%;
+      }
+
+      .section-header {
+        margin: 24px 0 10px;
+      }
+
+      .links-grid,
+      .gallery-grid,
+      .cmd-list {
+        grid-template-columns: minmax(0, 1fr);
+        gap: 10px;
+      }
+
+      .tablist-bar {
+        padding: 8px;
+      }
+
+      .tablist {
+        width: 100%;
+        display: grid;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        gap: 6px;
+      }
+
+      [role="tab"] {
+        padding: 9px 8px;
+        font-size: 0.78rem;
+        min-block-size: 42px;
+        background: rgb(30 41 59 / 0.55);
+        border: 1px solid rgb(51 65 85 / 0.55);
+        border-radius: 9px;
+      }
+
+      [role="tab"][aria-selected="true"] {
+        background: rgb(56 189 248 / 0.16);
+        border-color: var(--accent);
+      }
+
+      [role="tab"][aria-selected="true"]::after {
+        display: none;
+      }
+
+      #live-refresh-indicator {
+        width: 100%;
+        text-align: center;
+        font-size: 0.72rem !important;
+        padding-bottom: 2px;
+      }
+
+      .tabpanel-inner {
+        padding: 12px;
+      }
+
+      /* Transform Live Transcripts Table into Compact Mobile Cards */
+      .data-table,
+      .data-table tbody,
+      .data-table tr,
+      .data-table td {
+        display: block;
+        width: 100%;
+        min-width: 0;
+      }
+
+      .data-table thead {
+        display: none;
+      }
+
+      .data-table tr {
+        background: rgb(15 23 42 / 0.75);
+        border: 1px solid var(--border);
+        border-radius: 12px;
+        padding: 11px 12px;
+        margin-bottom: 10px;
+      }
+
+      .data-table td {
+        padding: 3px 0;
+        border: 0;
+      }
+
+      .data-table td[data-label]::before {
+        content: attr(data-label) ": ";
+        color: var(--text-muted);
+        font-size: 0.72rem;
+        font-weight: 600;
+        text-transform: uppercase;
+      }
+    }
+  </style>
+</head>
+<body>
+
+  <!-- Top Navigation Bar -->
+  <header class="topbar">
+    <div class="topbar-inner">
+      <div class="brand">
+        <img src="images/apple_touch_icon.png" alt="M5 Audio Icon" class="brand-icon">
+        <div class="brand-text">
+          <span class="brand-badge">M5StickC Plus</span>
+          <span class="brand-title">Audio &amp; Memory Hub</span>
+        </div>
+      </div>
+      <nav class="nav-links" aria-label="Section navigation">
+        <a href="#live-explorer">📡 Live Hub</a>
+        <a href="#quick-links">🔗 Links</a>
+        <a href="#visual-guides">🖼️ Guides</a>
+        <a href="#cli-commands">⌨️ Mac CLI</a>
+      </nav>
+    </div>
+  </header>
+
+  <main class="container">
+
+    <!-- Hero & Live Status -->
+    <section class="hero" aria-label="System overview and live status">
+      <div>
+        <div class="hero-eyebrow">⚡ Dual-Core ESP32 Streaming + Gemini AI</div>
+        <h1>Personal Audio Logger &amp; Daily Memory Hub</h1>
+        <p>
+          One-button dual-core streaming on your <strong>M5StickC Plus</strong> (connects via your configured 2.4 GHz Wi-Fi or records offline to internal flash), automatic transcription on your <strong>Cloud Audio Brain</strong> (works from <strong>any network or 5G</strong>), and smart daily summary + full verbatim transcript email briefings.
+        </p>
+        <div class="hero-actions">
+          <a class="btn btn-primary" href="#live-explorer">
+            🎙️ View Live Transcripts &amp; Logs
+          </a>
+          <button type="button" class="btn btn-orange" id="trigger-email-btn">
+            ✉️ Email Summary + Transcript Now
+          </button>
+          <button type="button" class="btn btn-secondary" id="refresh-live-btn">
+            🔄 Refresh Live Data
+          </button>
+          <a class="btn btn-secondary" id="hero-local-log-link" href="#live-explorer" target="_blank" rel="noopener" data-local-only hidden>
+            📟 Local Device Flash Log (LAN)
+          </a>
+        </div>
+        <div id="action-toast" class="toast" aria-live="polite"></div>
+      </div>
+
+      <div class="telemetry-grid">
+        <div class="stat-card">
+          <div class="stat-label">Cloud Server (Any Network)</div>
+          <div class="stat-value">
+            <span id="vm-dot" class="status-dot"></span>
+            <span id="vm-status-text">Checking...</span>
+          </div>
+          <div class="stat-sub" id="stat-nzt-time">Cloud Brain Server</div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-label">M5StickC Plus State</div>
+          <div class="stat-value">
+            <span id="device-dot" class="status-dot"></span>
+            <span id="device-status-text">Checking...</span>
+          </div>
+          <div class="stat-sub" id="device-sub-text">Wi-Fi: NVS Provisioned</div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-label">Today's Speech Clips</div>
+          <div class="stat-value" id="stat-speech-today">—</div>
+          <div class="stat-sub" id="stat-email-state">9:00 PM Auto-Email Active</div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-label" id="lan-card-label">Local Device LAN</div>
+          <div class="stat-value">
+            <span id="lan-dot" class="status-dot"></span>
+            <span id="lan-status-text">Probing...</span>
+          </div>
+          <div class="stat-sub" id="lan-sub-text">Requires same home Wi-Fi</div>
+        </div>
+      </div>
+    </section>
+
+    <!-- Network Requirements & Auto-Detection Banner -->
+    <section class="network-banner local-hidden" id="network-banner" aria-label="Network connectivity and local device access">
+      <div class="network-banner-top">
+        <div>
+          <div class="network-banner-title" id="network-banner-title">
+            📡 Network Guide &amp; Local Device Auto-Check
+          </div>
+          <p class="network-banner-desc" id="network-banner-desc">
+            Checking if your browser can reach the M5StickC Plus directly on your local Wi-Fi network...
+          </p>
+        </div>
+        <div class="network-banner-actions">
+          <button type="button" class="btn btn-secondary btn-sm" id="jump-mirrored-log-btn">
+            📟 View Cloud-Mirrored Device Log (Works Anywhere)
+          </button>
+          <button type="button" class="btn btn-secondary btn-sm" id="recheck-lan-btn">
+            🔄 Re-check Local LAN
+          </button>
+          <button type="button" class="btn btn-secondary btn-sm" id="toggle-local-links-btn">
+            👁️ Show Local Device Links
+          </button>
+        </div>
+      </div>
+
+      <div class="network-pills">
+        <div class="net-pill">
+          <div class="net-pill-title">🌐 Cloud Hub — Any Network / 5G</div>
+          <span>Works from anywhere! View live transcripts, memory bank, cloud logs, and <strong>mirrored M5StickC device logs</strong> on cellular or any Wi-Fi.</span>
+        </div>
+        <div class="net-pill">
+          <div class="net-pill-title">🏠 Home 2.4 GHz Wi-Fi — Direct Device IP</div>
+          <span>Direct ESP32 links only work when your phone/Mac is on the <strong>same home Wi-Fi</strong> as the device <em>and</em> it is in Standby.</span>
+        </div>
+        <div class="net-pill">
+          <div class="net-pill-title">📶 Hotspot Setup ("M5-AudioLogger") — 192.168.4.1</div>
+          <span>Active whenever Wi-Fi is unconfigured/unreachable: join <strong>M5-AudioLogger</strong> Wi-Fi and open <code>http://192.168.4.1</code> to configure Wi-Fi &amp; Cloud settings.</span>
+        </div>
+      </div>
+    </section>
+
+    <!-- 1. Live Interactive Logs & Transcripts Viewer (Moved to top for instant mobile access!) -->
+    <div class="section-header" id="live-explorer">
+      <div>
+        <h2>📡 Live Cloud Transcripts, Memory &amp; Mirrored Device Logs</h2>
+        <p>Works on <strong>any network (5G or Wi-Fi)</strong> — auto-refreshes every 10s from your Cloud Brain server.</p>
+      </div>
+    </div>
+
+    <div class="tabs-shell">
+      <div class="tablist-bar">
+        <div class="tablist" role="tablist" aria-label="Live system telemetry and logs">
+          <button type="button" role="tab" id="tab-transcripts" aria-selected="true" tabindex="0">
+            🎙️ Speech Transcripts
+          </button>
+          <button type="button" role="tab" id="tab-memory" aria-selected="false" tabindex="-1">
+            🧠 Memory Bank
+          </button>
+          <button type="button" role="tab" id="tab-device-log" aria-selected="false" tabindex="-1">
+            📟 Device Log (Cloud Mirror)
+          </button>
+          <button type="button" role="tab" id="tab-server-log" aria-selected="false" tabindex="-1">
+            🖥️ Cloud VM Log
+          </button>
+        </div>
+        <div style="font-size:0.78rem;color:var(--text-muted);" id="live-refresh-indicator">
+          Auto-refreshing every 10s
+        </div>
+      </div>
+
+      <div class="tab-panels-grid">
+        <!-- Panel 1: Live Speech Transcripts -->
+        <div role="tabpanel" id="panel-transcripts" aria-labelledby="tab-transcripts" tabindex="0">
+          <div class="tabpanel-inner">
+            <div class="panel-toolbar">
+              <div class="filter-group" role="group" aria-label="Filter audio chunks">
+                <button type="button" class="filter-btn active" data-filter="speech">🗣️ Speech Only</button>
+                <button type="button" class="filter-btn" data-filter="all">📋 All Clips (Incl. Silence)</button>
+              </div>
+              <span style="font-size:0.78rem;color:var(--text-muted);" id="chunks-count-label">Showing speech clips</span>
+            </div>
+            <div class="table-scroll">
+              <table class="data-table">
+                <thead>
+                  <tr>
+                    <th>Chunk</th>
+                    <th>Date &amp; Time (NZT)</th>
+                    <th>Session</th>
+                    <th>Duration / RMS</th>
+                    <th>Status</th>
+                    <th>Verbatim Transcript</th>
+                  </tr>
+                </thead>
+                <tbody id="transcripts-tbody">
+                  <tr>
+                    <td colspan="6" style="text-align:center;color:var(--text-muted);padding:24px;">
+                      Loading live transcripts from Cloud Brain server...
+                    </td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+
+        <!-- Panel 2: Rolling Long-Term Memory -->
+        <div role="tabpanel" id="panel-memory" aria-labelledby="tab-memory" hidden="until-found">
+          <div class="tabpanel-inner">
+            <div class="memory-box" id="memory-content">
+              Loading rolling long-term memory dossier from Cloud VM...
+            </div>
+          </div>
+        </div>
+
+        <!-- Panel 3: M5StickC Plus Device Log (Cloud Mirrored) -->
+        <div role="tabpanel" id="panel-device-log" aria-labelledby="tab-device-log" hidden="until-found">
+          <div class="tabpanel-inner">
+            <p style="margin:0 0 10px;font-size:0.82rem;color:var(--text-muted);">
+              ✅ <strong>Works on any network:</strong> Every M5StickC Plus boot, Wi-Fi connection, battery reading, recording chunk, and offload event is mirrored live to the Cloud VM below.
+            </p>
+            <div class="log-box" id="device-log-box">Loading m5stick_device.log from Cloud VM...</div>
+          </div>
+        </div>
+
+        <!-- Panel 4: Cloud VM Server Log -->
+        <div role="tabpanel" id="panel-server-log" aria-labelledby="tab-server-log" hidden="until-found">
+          <div class="tabpanel-inner">
+            <div class="log-box" id="server-log-box">Loading audio_brain.log from Cloud VM...</div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- 2. Direct Links to Cloud Endpoints, Docs & (Auto-Checked) Local Device -->
+    <div class="section-header" id="quick-links">
+      <div>
+        <h2>🔗 Direct API, Log &amp; Documentation Endpoints</h2>
+        <p id="quick-links-subtitle">Cloud links work on any network. Local LAN links auto-appear when your device IP is reachable on the same Wi-Fi.</p>
+      </div>
+    </div>
+
+    <div class="links-grid">
+      <a class="link-card" href="/logs/m5stick_device.log" target="_blank" rel="noopener">
+        <div>
+          <div class="link-card-top">
+            <span class="link-title">📟 Mirrored M5StickC Log (Full Text)</span>
+            <span class="link-badge badge-cloud">Any Network</span>
+          </div>
+          <p class="link-desc">Real-time plain-text log of M5StickC Plus boot, battery, Wi-Fi, recording, and offload events stored on the Cloud server.</p>
+        </div>
+        <div class="link-url">/logs/m5stick_device.log</div>
+      </a>
+
+      <a class="link-card" href="/logs/audio_brain.log" target="_blank" rel="noopener">
+        <div>
+          <div class="link-card-top">
+            <span class="link-title">🖥️ Cloud Server Log (Full Text)</span>
+            <span class="link-badge badge-cloud">Any Network</span>
+          </div>
+          <p class="link-desc">Complete plain-text stream of <code>audio_brain.log</code> (incoming audio chunks, Gemini transcriptions, and 9 PM email scheduler).</p>
+        </div>
+        <div class="link-url">/logs/audio_brain.log</div>
+      </a>
+
+      <a class="link-card" href="/api/status" target="_blank" rel="noopener">
+        <div>
+          <div class="link-card-top">
+            <span class="link-title">🗄️ SQLite Database &amp; Memory JSON</span>
+            <span class="link-badge badge-cloud">Any Network</span>
+          </div>
+          <p class="link-desc">Full JSON payload of the last 40 audio chunks, daily summary history, and the cumulative memory dossier.</p>
+        </div>
+        <div class="link-url">/api/status</div>
+      </a>
+
+      <a class="link-card" href="/api/ping" target="_blank" rel="noopener">
+        <div>
+          <div class="link-card-top">
+            <span class="link-title">⚡ Live Cloud Health &amp; Today Counter</span>
+            <span class="link-badge badge-cloud">Any Network</span>
+          </div>
+          <p class="link-desc">Instant JSON health check showing current local time, today's total chunks, speech chunks, and queue depth.</p>
+        </div>
+        <div class="link-url">/api/ping</div>
+      </a>
+
+      <a class="link-card" href="/docs/USER_GUIDE_AND_TESTING.md" target="_blank" rel="noopener">
+        <div>
+          <div class="link-card-top">
+            <span class="link-title">📘 User Guide &amp; Testing Manual</span>
+            <span class="link-badge badge-doc">Docs</span>
+          </div>
+          <p class="link-desc">Complete button controls, LCD indicator reference, log locations, and USB serial command manual.</p>
+        </div>
+        <div class="link-url">/docs/USER_GUIDE_AND_TESTING.md</div>
+      </a>
+
+      <a class="link-card" href="/docs/ARCHITECTURE.md" target="_blank" rel="noopener">
+        <div>
+          <div class="link-card-top">
+            <span class="link-title">📐 System Architecture Specification</span>
+            <span class="link-badge badge-doc">Docs</span>
+          </div>
+          <p class="link-desc">Detailed architecture specification, Mermaid sequence &amp; ER diagrams, and 4 MB flash partition table.</p>
+        </div>
+        <div class="link-url">/docs/ARCHITECTURE.md</div>
+      </a>
+
+      <a class="link-card" href="/classic" target="_blank" rel="noopener">
+        <div>
+          <div class="link-card-top">
+            <span class="link-title">📋 Lightweight Classic Dashboard</span>
+            <span class="link-badge badge-cloud">Any Network</span>
+          </div>
+          <p class="link-desc">Compact auto-refreshing HTML view of the latest 30 chunks and long-term memory table.</p>
+        </div>
+        <div class="link-url">/classic</div>
+      </a>
+
+      <!-- Local-Only On-Device Cards (Dynamically populated from live telemetry & hidden automatically unless reachable) -->
+      <a class="link-card" id="local-logs-card" href="#live-explorer" target="_blank" rel="noopener" data-local-only hidden>
+        <div>
+          <div class="link-card-top">
+            <span class="link-title">📟 Direct ESP32 Internal Flash Log</span>
+            <span class="link-badge badge-device">Local LAN Only</span>
+          </div>
+          <p class="link-desc">Reads <code>/device.log</code> directly from M5StickC Plus SPIFFS flash. Requires being on the same home 2.4 GHz Wi-Fi.</p>
+        </div>
+        <div class="link-url" id="local-logs-url">http://&lt;device-ip&gt;/logs</div>
+      </a>
+
+      <a class="link-card" id="local-portal-card" href="#live-explorer" target="_blank" rel="noopener" data-local-only hidden>
+        <div>
+          <div class="link-card-top">
+            <span class="link-title">📶 Direct ESP32 Wi-Fi &amp; Flash Portal</span>
+            <span class="link-badge badge-device">Local LAN Only</span>
+          </div>
+          <p class="link-desc">Configure NVS Wi-Fi &amp; Cloud settings or inspect SPIFFS usage directly on the ESP32 over local Wi-Fi.</p>
+        </div>
+        <div class="link-url" id="local-portal-url">http://&lt;device-ip&gt;/</div>
+      </a>
+    </div>
+
+    <!-- 3. Visual Hardware, LCD Screen States & System Architecture Guides -->
+    <div class="section-header" id="visual-guides">
+      <div>
+        <h2>🖼️ Visual Hardware, LCD Screen &amp; Architecture Guides</h2>
+        <p>Tap any diagram below to inspect it full-screen in high resolution.</p>
+      </div>
+    </div>
+
+    <div class="gallery-grid">
+      <!-- Image 1: Hardware Guide -->
+      <article class="gallery-card">
+        <button type="button" class="gallery-img-btn" data-zoom-src="images/m5stickc_plus_device_guide.jpg" data-zoom-title="M5StickC Plus — Hardware &amp; Button Callout Guide">
+          <img src="images/m5stickc_plus_device_guide.jpg" alt="M5StickC Plus hardware and button callout diagram">
+          <span class="zoom-pill">🔍 Tap to Zoom</span>
+        </button>
+        <div class="gallery-body">
+          <h3>1. M5StickC Plus Hardware &amp; Button Guide</h3>
+          <p>
+            <strong>Front [M5] Button</strong> starts/stops recording. <strong>Side Button (BtnB)</strong> short-press emails your summary + full transcript immediately; holding for 1.5s toggles Online/Offline mode. <strong>USB-C Power</strong> keeps the screen at 100% brightness without dimming.
+          </p>
+        </div>
+      </article>
+
+      <!-- Image 2: Architecture Infographic -->
+      <article class="gallery-card">
+        <button type="button" class="gallery-img-btn" data-zoom-src="images/system_architecture_infographic.jpg" data-zoom-title="End-to-End System Architecture Infographic">
+          <img src="images/system_architecture_infographic.jpg" alt="End-to-end system architecture diagram from M5StickC Plus to Google Cloud VM and Gmail">
+          <span class="zoom-pill">🔍 Tap to Zoom</span>
+        </button>
+        <div class="gallery-body">
+          <h3>2. End-to-End System Architecture</h3>
+          <p>
+            Shows how 16 kHz PDM audio is compressed into 4-bit IMA ADPCM, streamed live via Dual-Core Ping-Pong buffering over 2.4 GHz Wi-Fi (or buffered into 2.62 MB internal SPIFFS flash when offline and auto-offloaded), transcribed by Gemini Flash, stored in SQLite, and emailed daily.
+          </p>
+        </div>
+      </article>
+
+      <!-- Image 3: LCD Screen States (Full Width) -->
+      <article class="gallery-card gallery-card-wide">
+        <button type="button" class="gallery-img-btn" data-zoom-src="images/lcd_screen_states_guide.png" data-zoom-title="M5StickC Plus — Live LCD Screen States &amp; Indicator Guide">
+          <img src="images/lcd_screen_states_guide.png" alt="4-panel guide showing M5StickC Plus LCD screen states: Standby, Recording Live to Cloud, Offline Recording to Flash, and Instant Summary Email">
+          <span class="zoom-pill">🔍 Tap to Zoom</span>
+        </button>
+        <div class="gallery-body">
+          <h3>3. Live LCD Screen States &amp; Status Bar Reference</h3>
+          <p>
+            Explains all 4 color-coded LCD screen cards (<strong>Green Standby</strong>, <strong>Red Live Cloud Recording</strong>, <strong>Amber Offline Flash VAD Recording</strong>, and <strong>Blue Instant Email Confirmation</strong>) along with the top-right <code>USB 100%</code> vs. battery indicator and bottom counters.
+          </p>
+        </div>
+      </article>
+    </div>
+
+    <!-- 4. Mac Terminal & USB Serial Commands -->
+    <div class="section-header" id="cli-commands">
+      <div>
+        <h2>⌨️ Mac Terminal &amp; USB-C Serial Commands <span class="link-badge badge-local" style="vertical-align:middle;">Mac + USB-C Only</span></h2>
+        <p>For use on your MacBook when syncing backups or communicating with the M5StickC Plus over a USB-C cable.</p>
+      </div>
+    </div>
+
+    <div class="cmd-list">
+      <div class="cmd-card">
+        <div class="cmd-header">
+          <span class="cmd-title">🔄 Sync Cloud Logs &amp; SQLite Backup</span>
+          <button type="button" class="copy-btn" data-copy="python3 sync_logs.py vm">Copy</button>
+        </div>
+        <pre class="cmd-code">python3 sync_logs.py vm</pre>
+      </div>
+
+      <div class="cmd-card">
+        <div class="cmd-header">
+          <span class="cmd-title">📟 Read On-Device Flash Log via USB-C</span>
+          <button type="button" class="copy-btn" data-copy="uv run --with pyserial python3 configure_wifi.py logs">Copy</button>
+        </div>
+        <pre class="cmd-code">uv run --with pyserial python3 configure_wifi.py logs</pre>
+      </div>
+
+      <div class="cmd-card">
+        <div class="cmd-header">
+          <span class="cmd-title">📊 Check M5StickC Plus Live Status via USB-C</span>
+          <button type="button" class="copy-btn" data-copy="uv run --with pyserial python3 configure_wifi.py status">Copy</button>
+        </div>
+        <pre class="cmd-code">uv run --with pyserial python3 configure_wifi.py status</pre>
+      </div>
+
+      <div class="cmd-card">
+        <div class="cmd-header">
+          <span class="cmd-title">📶 Set Wi-Fi &amp; Cloud NVS Credentials via USB-C</span>
+          <button type="button" class="copy-btn" data-copy='uv run --with pyserial python3 configure_wifi.py set "YOUR_SSID"'>Copy</button>
+        </div>
+        <pre class="cmd-code">uv run --with pyserial python3 configure_wifi.py set "SSID" &amp;&amp; uv run --with pyserial python3 configure_wifi.py cloud "HOST" 8765</pre>
+      </div>
+    </div>
+
+  </main>
+
+  <!-- Native Modal Dialog for High-Resolution Image Lightbox -->
+  <dialog id="img-lightbox" closedby="any" aria-labelledby="lightbox-title">
+    <div class="dialog-header">
+      <h2 id="lightbox-title">Diagram Preview</h2>
+      <form method="dialog" style="margin:0;">
+        <button class="btn btn-secondary btn-sm" value="close" autofocus>✕ Close</button>
+      </form>
+    </div>
+    <div class="dialog-body">
+      <img id="lightbox-img" src="" alt="">
+    </div>
+  </dialog>
+
+  <script>
+    const urlParams = new URLSearchParams(window.location.search);
+    const VM_BASE = urlParams.get("vm")
+      ? urlParams.get("vm").replace(/\/$/, "")
+      : (window.location.protocol.startsWith("http") ? "" : "");
+
+    let allChunksCache = [];
+    let currentChunkFilter = "speech";
+    let localLinksForcedVisible = false;
+    let localLanReachable = false;
+    let parsedDeviceInfo = {
+      ssid: "",
+      ip: "",
+      battery: "",
+      isRecording: false,
+      lastEventTs: ""
+    };
+
+    function isValidIpv4(ip) {
+      return /^(\d{1,3}\.){3}\d{1,3}$/.test(ip || "");
+    }
+
+    function updateLocalLinkTargets() {
+      const hasIp = isValidIpv4(parsedDeviceInfo.ip);
+      const baseLocal = hasIp ? `http://${parsedDeviceInfo.ip}` : "";
+      const heroLink = document.getElementById("hero-local-log-link");
+      const logsCard = document.getElementById("local-logs-card");
+      const portalCard = document.getElementById("local-portal-card");
+      const logsUrlEl = document.getElementById("local-logs-url");
+      const portalUrlEl = document.getElementById("local-portal-url");
+      const lanCardLabel = document.getElementById("lan-card-label");
+      const ssidLabel = parsedDeviceInfo.ssid ? `"${parsedDeviceInfo.ssid}"` : "Home Wi-Fi";
+
+      if (hasIp) {
+        if (heroLink) heroLink.href = `${baseLocal}/logs`;
+        if (logsCard) logsCard.href = `${baseLocal}/logs`;
+        if (portalCard) portalCard.href = `${baseLocal}/`;
+        if (logsUrlEl) logsUrlEl.textContent = `${baseLocal}/logs`;
+        if (portalUrlEl) portalUrlEl.textContent = `${baseLocal}/`;
+        if (lanCardLabel) lanCardLabel.textContent = `Local LAN (${parsedDeviceInfo.ip})`;
+      } else {
+        if (lanCardLabel) lanCardLabel.textContent = "Local Device LAN";
+      }
+      if (heroLink && parsedDeviceInfo.ssid) {
+        heroLink.textContent = `📟 Local Device Log (${ssidLabel})`;
+      }
+    }
+
+    // 1. Accessible Tabs Logic
+    const tabs = Array.from(document.querySelectorAll('[role="tab"]'));
+    const panels = Array.from(document.querySelectorAll('[role="tabpanel"]'));
+
+    function selectTab(selectedTab, moveFocus = false) {
+      for (const tab of tabs) {
+        const isSelected = tab === selectedTab;
+        tab.setAttribute("aria-selected", isSelected ? "true" : "false");
+        tab.tabIndex = isSelected ? 0 : -1;
+        if (moveFocus && isSelected) {
+          tab.focus();
+        }
+      }
+      for (const panel of panels) {
+        const isMatch = panel.getAttribute("aria-labelledby") === selectedTab.id;
+        if (isMatch) {
+          panel.removeAttribute("hidden");
+          panel.tabIndex = 0;
+        } else {
+          panel.setAttribute("hidden", "until-found");
+          panel.removeAttribute("tabindex");
+        }
+      }
+    }
+
+    for (const tab of tabs) {
+      tab.addEventListener("click", () => selectTab(tab, false));
+      tab.addEventListener("keydown", (e) => {
+        const idx = tabs.indexOf(tab);
+        if (e.key === "ArrowRight") {
+          e.preventDefault();
+          selectTab(tabs[(idx + 1) % tabs.length], true);
+        } else if (e.key === "ArrowLeft") {
+          e.preventDefault();
+          selectTab(tabs[(idx - 1 + tabs.length) % tabs.length], true);
+        } else if (e.key === "Home") {
+          e.preventDefault();
+          selectTab(tabs[0], true);
+        } else if (e.key === "End") {
+          e.preventDefault();
+          selectTab(tabs[tabs.length - 1], true);
+        }
+      });
+    }
+
+    for (const panel of panels) {
+      panel.addEventListener("beforematch", () => {
+        const tab = document.getElementById(panel.getAttribute("aria-labelledby"));
+        if (tab) selectTab(tab, false);
+      });
+    }
+
+    // Jump straight to Cloud-Mirrored Device Log tab
+    document.getElementById("jump-mirrored-log-btn").addEventListener("click", () => {
+      const devTab = document.getElementById("tab-device-log");
+      if (devTab) {
+        selectTab(devTab, false);
+        document.getElementById("live-explorer").scrollIntoView({ behavior: "smooth" });
+      }
+    });
+
+    // 2. Filter Buttons for Transcripts (All vs Speech Only)
+    for (const btn of document.querySelectorAll("[data-filter]")) {
+      btn.addEventListener("click", () => {
+        currentChunkFilter = btn.dataset.filter;
+        for (const b of document.querySelectorAll("[data-filter]")) {
+          b.classList.toggle("active", b === btn);
+        }
+        renderTranscriptsTable();
+      });
+    }
+
+    // 3. Native <dialog> Lightbox + Safari closedby="any" Fallback
+    const lightbox = document.getElementById("img-lightbox");
+    const lightboxImg = document.getElementById("lightbox-img");
+    const lightboxTitle = document.getElementById("lightbox-title");
+
+    for (const btn of document.querySelectorAll("[data-zoom-src]")) {
+      btn.addEventListener("click", () => {
+        lightboxImg.src = btn.dataset.zoomSrc;
+        lightboxImg.alt = btn.dataset.zoomTitle || "Full size diagram";
+        lightboxTitle.textContent = btn.dataset.zoomTitle || "Diagram Preview";
+        lightbox.showModal();
+      });
+    }
+
+    if (!("closedBy" in HTMLDialogElement.prototype)) {
+      const outside = (e, dialog) => {
+        const r = dialog.getBoundingClientRect();
+        return e.clientX < r.left || e.clientX > r.right || e.clientY < r.top || e.clientY > r.bottom;
+      };
+      let pressedOutside = false;
+      lightbox.addEventListener("pointerdown", (e) => { pressedOutside = outside(e, lightbox); });
+      lightbox.addEventListener("pointerup", (e) => { if (pressedOutside && outside(e, lightbox)) lightbox.close(); });
+    }
+
+    // 4. Copy CLI Commands
+    for (const btn of document.querySelectorAll("[data-copy]")) {
+      btn.addEventListener("click", async () => {
+        try {
+          await navigator.clipboard.writeText(btn.dataset.copy);
+          const prev = btn.textContent;
+          btn.textContent = "✓ Copied!";
+          setTimeout(() => { btn.textContent = prev; }, 1800);
+        } catch (err) {
+          console.error(err);
+        }
+      });
+    }
+
+    // 5. Local Network Reachability Check & Auto-Hide Logic
+    function applyLocalLinksVisibility() {
+      const hasIp = isValidIpv4(parsedDeviceInfo.ip);
+      const showLocal = hasIp && (localLanReachable || localLinksForcedVisible);
+      for (const el of document.querySelectorAll("[data-local-only]")) {
+        if (showLocal) {
+          el.removeAttribute("hidden");
+        } else {
+          el.setAttribute("hidden", "");
+        }
+      }
+
+      const toggleBtn = document.getElementById("toggle-local-links-btn");
+      if (!hasIp || localLanReachable) {
+        toggleBtn.setAttribute("hidden", "");
+      } else {
+        toggleBtn.removeAttribute("hidden");
+        toggleBtn.textContent = localLinksForcedVisible
+          ? `🙈 Hide Local (${parsedDeviceInfo.ip}) Links`
+          : `👁️ Show Local (${parsedDeviceInfo.ip}) Links Anyway`;
+      }
+    }
+
+    async function checkLocalDeviceReachability() {
+      updateLocalLinkTargets();
+      const lanDot = document.getElementById("lan-dot");
+      const lanStatus = document.getElementById("lan-status-text");
+      const lanSub = document.getElementById("lan-sub-text");
+      const banner = document.getElementById("network-banner");
+      const bannerTitle = document.getElementById("network-banner-title");
+      const bannerDesc = document.getElementById("network-banner-desc");
+
+      const ssidLabel = escapeHtml(parsedDeviceInfo.ssid || "Home Wi-Fi");
+      if (!isValidIpv4(parsedDeviceInfo.ip)) {
+        localLanReachable = false;
+        lanDot.className = "status-dot";
+        lanStatus.textContent = "Cloud-Only";
+        lanSub.textContent = "Waiting for device IP";
+        banner.className = "network-banner local-hidden";
+        bannerTitle.textContent = "🔒 Local-Only Device Links Auto-Hidden";
+        bannerDesc.innerHTML = "Once your M5StickC Plus connects to Wi-Fi and checks in, direct local LAN links will auto-probe. <strong>Everything works right here via the Cloud server!</strong>";
+        applyLocalLinksVisibility();
+        return;
+      }
+
+      const localBaseUrl = `http://${parsedDeviceInfo.ip}`;
+      lanDot.className = "status-dot";
+      lanStatus.textContent = "Checking...";
+
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), 2400);
+
+      try {
+        await fetch(`${localBaseUrl}/`, {
+          mode: "no-cors",
+          cache: "no-store",
+          signal: controller.signal
+        });
+        clearTimeout(timer);
+        localLanReachable = true;
+        lanDot.className = "status-dot online";
+        lanStatus.textContent = "Connected (LAN)";
+        lanSub.textContent = `On ${ssidLabel} (${parsedDeviceInfo.ip})`;
+
+        banner.className = "network-banner local-online";
+        bannerTitle.textContent = `🟢 Connected to ${parsedDeviceInfo.ssid || "Home Wi-Fi"} — Local Device Reachable (${parsedDeviceInfo.ip})`;
+        bannerDesc.innerHTML = `Your browser can reach the M5StickC Plus directly at <code>${escapeHtml(parsedDeviceInfo.ip)}</code>. Both <strong>Cloud Hub</strong> and <strong>Direct On-Device</strong> links are active below.`;
+      } catch (err) {
+        clearTimeout(timer);
+        localLanReachable = false;
+        lanDot.className = "status-dot";
+        lanStatus.textContent = "Cloud-Only";
+        lanSub.textContent = parsedDeviceInfo.isRecording
+          ? `Rec active on ${parsedDeviceInfo.ssid || "Wi-Fi"}`
+          : `Need ${parsedDeviceInfo.ssid || "Home"} Wi-Fi`;
+
+        banner.className = "network-banner local-hidden";
+        const reasonText = parsedDeviceInfo.isRecording
+          ? `The M5StickC Plus is currently <strong>actively recording audio</strong> on <strong>${ssidLabel}</strong> and streaming live logs to the Cloud server.`
+          : `Your browser cannot reach <code>${escapeHtml(parsedDeviceInfo.ip)}</code> right now (requires being connected to the same <strong>${ssidLabel}</strong> Wi-Fi network with the M5StickC Plus powered on).`;
+
+        bannerTitle.textContent = `🔒 Local-Only Device Links (${parsedDeviceInfo.ip}) Auto-Hidden`;
+        bannerDesc.innerHTML = `${reasonText} <strong>Everything you need works right here via the Cloud server</strong> — including the live <strong>Cloud-Mirrored Device Log</strong>!`;
+      }
+
+      applyLocalLinksVisibility();
+    }
+
+    document.getElementById("recheck-lan-btn").addEventListener("click", () => {
+      checkLocalDeviceReachability();
+    });
+
+    document.getElementById("toggle-local-links-btn").addEventListener("click", () => {
+      localLinksForcedVisible = !localLinksForcedVisible;
+      applyLocalLinksVisibility();
+    });
+
+    // 6. Parse M5StickC Plus Live State from Cloud-Mirrored Device Logs & Telemetry
+    function updateDeviceStateFromLogs(deviceLines, telemetry, serverLines) {
+      if (Array.isArray(deviceLines) && deviceLines.length > 0) {
+        let lastStartIdx = -1;
+        let lastStopIdx = -1;
+        let lastChunkIdx = -1;
+
+        for (let i = 0; i < deviceLines.length; i++) {
+          const line = deviceLines[i];
+          const vMatch = line.match(/\[\s*([0-9-]+\s+[0-9:]+)\s*\|\s*([0-9.]+V)\]/);
+          if (vMatch) {
+            parsedDeviceInfo.lastEventTs = vMatch[1];
+            parsedDeviceInfo.battery = vMatch[2];
+          }
+          const wifiMatch = line.match(/SSID='([^']+)'\s+IP=([0-9.]+)/);
+          if (wifiMatch) {
+            parsedDeviceInfo.ssid = wifiMatch[1];
+            parsedDeviceInfo.ip = wifiMatch[2];
+          }
+          if (line.includes("RECORD_START:")) lastStartIdx = i;
+          if (line.includes("CHUNK_OK:")) lastChunkIdx = i;
+          if (line.includes("RECORD_STOP:") || line.includes("WIFI_CONNECTED:") || line.includes("BOOT:")) {
+            lastStopIdx = i;
+          }
+        }
+        parsedDeviceInfo.isRecording = Math.max(lastStartIdx, lastChunkIdx) > lastStopIdx;
+      }
+
+      // Override with live server device_telemetry if available
+      if (telemetry && telemetry.last_seen_epoch > 0) {
+        parsedDeviceInfo.isRecording = Boolean(telemetry.recording);
+        if (telemetry.vbat) parsedDeviceInfo.battery = telemetry.vbat;
+        if (telemetry.ip) parsedDeviceInfo.ip = telemetry.ip;
+        if (telemetry.ssid) parsedDeviceInfo.ssid = telemetry.ssid;
+      } else if (Array.isArray(serverLines) && serverLines.length > 0) {
+        // Also check if a standby /api/ping occurred after the last /api/audio upload
+        let lastPingServerIdx = -1;
+        let lastAudioServerIdx = -1;
+        for (let i = 0; i < serverLines.length; i++) {
+          if (serverLines[i].includes("GET /api/ping") && !serverLines[i].includes("rec=1")) {
+            lastPingServerIdx = i;
+          }
+          if (serverLines[i].includes("POST /api/audio")) {
+            lastAudioServerIdx = i;
+          }
+        }
+        if (lastPingServerIdx > lastAudioServerIdx) {
+          parsedDeviceInfo.isRecording = false;
+        }
+      }
+
+      const devDot = document.getElementById("device-dot");
+      const devStatus = document.getElementById("device-status-text");
+      const devSub = document.getElementById("device-sub-text");
+
+      if (parsedDeviceInfo.isRecording) {
+        devDot.className = "status-dot recording";
+        devStatus.textContent = "Recording Live";
+      } else {
+        devDot.className = "status-dot online";
+        devStatus.textContent = "Standby / Ready";
+      }
+      const batPart = parsedDeviceInfo.battery ? ` • ${parsedDeviceInfo.battery}` : "";
+      const ssidText = parsedDeviceInfo.ssid || "Wi-Fi";
+      devSub.textContent = `Wi-Fi: ${ssidText}${batPart}`;
+      updateLocalLinkTargets();
+    }
+
+    // 7. Render Transcripts Table with Filter Support
+    function escapeHtml(str) {
+      const div = document.createElement("div");
+      div.textContent = str || "";
+      return div.innerHTML;
+    }
+
+    function isMeaningfulSpeech(c) {
+      if (c.status !== "SPEECH") return false;
+      const t = (c.transcript || "").trim().toLowerCase();
+      if (!t || t === "<noise>" || t === "[noise]" || t === "[silence]" || t === "<silence>") {
+        return false;
+      }
+      return true;
+    }
+
+    function renderTranscriptsTable() {
+      const tbody = document.getElementById("transcripts-tbody");
+      const countLabel = document.getElementById("chunks-count-label");
+      const filtered = currentChunkFilter === "speech"
+        ? allChunksCache.filter(isMeaningfulSpeech)
+        : allChunksCache;
+
+      countLabel.textContent = `Showing ${filtered.length} of ${allChunksCache.length} recent clips`;
+
+      if (filtered.length === 0) {
+        tbody.innerHTML = `<tr><td colspan="6" style="text-align:center;color:var(--text-muted);padding:24px;">${
+          currentChunkFilter === "speech"
+            ? "No intelligible speech clips in the recent window. Tap 'All Clips' to see silent/noise chunks, or speak into your M5StickC Plus!"
+            : "No audio chunks recorded yet. Press [M5] on your M5StickC Plus!"
+        }</td></tr>`;
+        return;
+      }
+
+      tbody.innerHTML = filtered.map(c => {
+        const isSpeech = isMeaningfulSpeech(c);
+        const pillClass = isSpeech ? "pill-speech" : "pill-silence";
+        const displayStatus = isSpeech ? "SPEECH" : (c.status === "PENDING" ? "PENDING" : "SILENCE");
+        const txt = isSpeech
+          ? `<strong>${escapeHtml(c.transcript)}</strong>`
+          : `<span style="color:var(--text-muted);">${c.status === "PENDING" ? "⏳ Transcribing with Gemini..." : "(Room silence / background noise skipped)"}</span>`;
+        return `
+          <tr>
+            <td data-label="Chunk" style="font-family:monospace;color:var(--accent);font-weight:700;">#${c.id}</td>
+            <td data-label="Time (NZT)" style="font-family:monospace;">${escapeHtml(c.date_nzst)} ${escapeHtml(c.time_nzst)}</td>
+            <td data-label="Session" style="font-family:monospace;color:var(--text-muted);">${escapeHtml(c.session_id)}</td>
+            <td data-label="Clip">${c.duration_sec}s <span style="color:var(--text-muted);">(RMS ${c.rms_raw})</span></td>
+            <td data-label="State"><span class="${pillClass}">${escapeHtml(displayStatus)}</span></td>
+            <td data-label="Transcript" style="padding-top:4px;">${txt}</td>
+          </tr>
+        `;
+      }).join("");
+    }
+
+    // 8. Live Cloud VM Fetcher (/api/status and /api/logs)
+    async function fetchLiveCloudData() {
+      const dot = document.getElementById("vm-dot");
+      const statusText = document.getElementById("vm-status-text");
+      const speechEl = document.getElementById("stat-speech-today");
+      const timeEl = document.getElementById("stat-nzt-time");
+      const emailEl = document.getElementById("stat-email-state");
+      const refreshInd = document.getElementById("live-refresh-indicator");
+
+      try {
+        const [statusRes, logsRes] = await Promise.all([
+          fetch(`${VM_BASE}/api/status`),
+          fetch(`${VM_BASE}/api/logs`)
+        ]);
+
+        if (!statusRes.ok) throw new Error(`HTTP ${statusRes.status}`);
+        const statusData = await statusRes.json();
+        const logsData = logsRes.ok ? await logsRes.json() : null;
+
+        dot.className = "status-dot online";
+        statusText.textContent = "ONLINE";
+        timeEl.textContent = `NZT: ${statusData.now_nzst || "—"}`;
+
+        allChunksCache = statusData.recent_chunks || [];
+        const todayDate = (statusData.now_nzst || "").slice(0, 10);
+        const todayChunks = allChunksCache.filter(c => c.date_nzst === todayDate);
+        const todaySpeech = todayChunks.filter(isMeaningfulSpeech);
+        speechEl.textContent = `${todaySpeech.length} speech / ${todayChunks.length} total`;
+
+        const summaries = statusData.daily_summaries || [];
+        const todaySummary = summaries.find(s => s.date_nzst === todayDate);
+        if (todaySummary && todaySummary.email_sent) {
+          emailEl.textContent = `Emailed today (${todaySummary.generated_at_nzst.slice(11, 16)} NZT)`;
+        } else {
+          emailEl.textContent = "9:00 PM Auto-Email Active";
+        }
+
+        renderTranscriptsTable();
+
+        // Render Long-Term Memory
+        const lt = statusData.long_term_context || {};
+        const memBox = document.getElementById("memory-content");
+        memBox.innerHTML = `
+          <div style="display:flex;flex-wrap:wrap;justify-content:space-between;align-items:center;gap:8px;margin-bottom:12px;border-bottom:1px solid var(--border);padding-bottom:10px;">
+            <strong>Cumulative Memory Dossier (Days Summarized: ${lt.days_summarized || 0})</strong>
+            <span style="font-size:0.78rem;color:var(--text-muted);">Updated: ${escapeHtml(lt.updated_at_nzst || "Pending")}</span>
+          </div>
+          <div style="white-space:pre-wrap;font-size:0.9rem;line-height:1.6;">${escapeHtml(lt.context_markdown || "No memory context built yet.")}</div>
+        `;
+
+        // Render Logs & Parse Device State
+        if (logsData) {
+          const serverBox = document.getElementById("server-log-box");
+          const deviceBox = document.getElementById("device-log-box");
+          serverBox.textContent = (logsData.lines || []).join("\n") || "No server log lines.";
+          deviceBox.textContent = (logsData.device_lines || []).join("\n") || "No device log lines.";
+          updateDeviceStateFromLogs(logsData.device_lines || [], statusData.device_telemetry, logsData.lines || []);
+        }
+
+        refreshInd.textContent = `Synced: ${new Date().toLocaleTimeString()}`;
+      } catch (err) {
+        dot.className = "status-dot offline";
+        statusText.textContent = "Unreachable";
+        refreshInd.textContent = `Sync error (${err.message})`;
+      }
+    }
+
+    // 9. On-Demand Email Trigger Button
+    document.getElementById("trigger-email-btn").addEventListener("click", async () => {
+      const toast = document.getElementById("action-toast");
+      toast.style.color = "#38bdf8";
+      toast.textContent = "⏳ Synthesizing today's transcripts with Gemini 3.5 Flash and sending email...";
+      try {
+        const res = await fetch(`${VM_BASE}/api/summarize`, {
+          method: "POST",
+          headers: { "Accept": "application/json" }
+        });
+        const data = await res.json();
+        if (data.ok && data.email_sent) {
+          toast.style.color = "#4ade80";
+          toast.textContent = `✓ Daily summary email sent! (${data.speech_chunks} speech clips + full verbatim transcript included)`;
+          fetchLiveCloudData();
+        } else {
+          toast.style.color = "#f59e0b";
+          toast.textContent = `⚠️ Summary generated, but email status reported: ${data.email_error || "Not sent"}`;
+        }
+      } catch (err) {
+        toast.style.color = "#ef4444";
+        toast.textContent = `✕ Could not reach Cloud VM: ${err.message}`;
+      }
+    });
+
+    document.getElementById("refresh-live-btn").addEventListener("click", () => {
+      fetchLiveCloudData();
+      checkLocalDeviceReachability();
+    });
+
+    // Initial load: fetch Cloud VM data first, then run local LAN check
+    fetchLiveCloudData().then(() => {
+      checkLocalDeviceReachability();
+    });
+    setInterval(fetchLiveCloudData, 10000);
+  </script>
+</body>
+</html>
