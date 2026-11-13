@@ -86,7 +86,28 @@ os.makedirs(AUDIO_TMP_DIR, exist_ok=True)
 # Background transcription queue & telemetry state
 transcription_queue = queue.Queue()
 db_lock = threading.Lock()
+display_lock = threading.Lock()
 last_web_summary_epoch = 0.0
+
+DEFAULT_DISPLAY_SETTINGS = {
+    "mode": 0,
+    "bright": 85,
+    "adim": True,
+    "flip": False,
+    "wstyle": 0,
+    "wcol": 0,
+    "w24": False,
+    "wsec": True,
+    "wdate": True,
+    "wbat": True,
+    "wdot": True,
+    "wlock": False,
+    "wtag": "M5 AUDIO",
+}
+
+pending_display_cmd = None
+next_display_seq = max(1, int(time.time()) - 1700000000)
+
 device_telemetry = {
     "recording": False,
     "vbat": "",
@@ -95,7 +116,52 @@ device_telemetry = {
     "ssid": "",
     "last_seen_nzst": "",
     "last_seen_epoch": 0.0,
+    "display": dict(DEFAULT_DISPLAY_SETTINGS),
+    "display_pending": False,
 }
+
+
+def _parse_bool(val, default=False) -> bool:
+    if isinstance(val, bool):
+        return val
+    if isinstance(val, (int, float)):
+        return val != 0
+    if isinstance(val, str):
+        v = val.strip().lower()
+        if v in ("1", "true", "yes", "on"):
+            return True
+        if v in ("0", "false", "no", "off"):
+            return False
+    return default
+
+
+def _clamp_int(val, lo: int, hi: int, default: int) -> int:
+    try:
+        return max(lo, min(hi, int(val)))
+    except Exception:
+        return default
+
+
+def sanitize_display_settings(payload: dict, base: dict = None) -> dict:
+    cur = dict(base or DEFAULT_DISPLAY_SETTINGS)
+    if "mode" in payload:
+        cur["mode"] = _clamp_int(payload["mode"], 0, 2, cur["mode"])
+    if "bright" in payload:
+        cur["bright"] = _clamp_int(payload["bright"], 10, 100, cur["bright"])
+    if "wstyle" in payload:
+        cur["wstyle"] = _clamp_int(payload["wstyle"], 0, 3, cur["wstyle"])
+    if "wcol" in payload:
+        cur["wcol"] = _clamp_int(payload["wcol"], 0, 5, cur["wcol"])
+    for bk in ("adim", "flip", "w24", "wsec", "wdate", "wbat", "wdot", "wlock"):
+        if bk in payload:
+            cur[bk] = _parse_bool(payload[bk], cur[bk])
+    if "wtag" in payload:
+        raw_tag = str(payload["wtag"])
+        clean_tag = re.sub(r"[^\x20-\x7e]", "", raw_tag)
+        for ch in ("<", ">", '"', "'"):
+            clean_tag = clean_tag.replace(ch, "")
+        cur["wtag"] = clean_tag.strip()[:16]
+    return cur
 
 
 def is_valid_device_token(provided: str) -> bool:
@@ -868,10 +934,12 @@ class AudioLoggerHandler(BaseHTTPRequestHandler):
     def do_GET(self):
         parsed = urllib.parse.urlparse(self.path)
         if parsed.path == "/api/ping":
+            global pending_display_cmd
             dt = now_nz()
             today_str = dt.strftime("%Y-%m-%d")
             qs = urllib.parse.parse_qs(parsed.query)
             token = self.headers.get("X-Device-Token", "")
+            cmd_to_send = None
             if is_valid_device_token(token) and ("rec" in qs or "vbat" in qs):
                 device_telemetry["recording"] = qs.get("rec", ["0"])[0] == "1"
                 if "vbat" in qs:
@@ -884,6 +952,22 @@ class AudioLoggerHandler(BaseHTTPRequestHandler):
                     device_telemetry["ssid"] = qs["ssid"][0].replace("\r", "").replace("\n", "")[:64]
                 device_telemetry["last_seen_nzst"] = dt.strftime("%Y-%m-%d %H:%M:%S")
                 device_telemetry["last_seen_epoch"] = time.time()
+
+                dseq = _clamp_int(qs.get("dseq", ["0"])[0], 0, 2000000000, 0)
+                with display_lock:
+                    if pending_display_cmd and dseq >= pending_display_cmd["seq"]:
+                        pending_display_cmd = None
+                        device_telemetry["display_pending"] = False
+                    if pending_display_cmd is not None:
+                        cmd_to_send = {
+                            "seq": pending_display_cmd["seq"],
+                            **pending_display_cmd["settings"],
+                        }
+                    elif any(k in qs for k in ("mode", "bright", "wstyle", "wcol")):
+                        flat_qs = {k: v[0] for k, v in qs.items() if v}
+                        device_telemetry["display"] = sanitize_display_settings(
+                            flat_qs, device_telemetry.get("display")
+                        )
             elif not check_dashboard_auth(self.headers):
                 self._send_auth_required()
                 return
@@ -897,17 +981,17 @@ class AudioLoggerHandler(BaseHTTPRequestHandler):
                 )
                 row = cur.fetchone()
                 conn.close()
-            self._send_json(
-                200,
-                {
-                    "ok": True,
-                    "time_nzst": dt.strftime("%H:%M:%S"),
-                    "date_nzst": today_str,
-                    "chunks_today": row["total"] or 0,
-                    "speech_today": row["speech"] or 0,
-                    "queue_size": transcription_queue.qsize(),
-                },
-            )
+            resp_obj = {
+                "ok": True,
+                "time_nzst": dt.strftime("%H:%M:%S"),
+                "date_nzst": today_str,
+                "chunks_today": row["total"] or 0,
+                "speech_today": row["speech"] or 0,
+                "queue_size": transcription_queue.qsize(),
+            }
+            if cmd_to_send is not None:
+                resp_obj["display_cmd"] = cmd_to_send
+            self._send_json(200, resp_obj)
             return
 
         if not check_dashboard_auth(self.headers):
@@ -1147,6 +1231,34 @@ class AudioLoggerHandler(BaseHTTPRequestHandler):
     def do_POST(self):
         global last_web_summary_epoch
         parsed = urllib.parse.urlparse(self.path)
+
+        if parsed.path == "/api/device-display":
+            global pending_display_cmd, next_display_seq
+            token = self.headers.get("X-Device-Token", "")
+            if not is_valid_device_token(token) and not check_dashboard_auth(self.headers):
+                self._send_auth_required()
+                return
+            try:
+                content_len = min(int(self.headers.get("Content-Length", "0") or "0"), 16384)
+                raw_body = self.rfile.read(content_len).decode("utf-8", errors="replace")
+                payload = json.loads(raw_body) if raw_body.strip() else {}
+                if not isinstance(payload, dict):
+                    self._send_json(400, {"ok": False, "error": "JSON object expected"})
+                    return
+                with display_lock:
+                    merged = sanitize_display_settings(payload, device_telemetry.get("display"))
+                    next_display_seq = max(next_display_seq + 1, int(time.time()) - 1700000000)
+                    seq = next_display_seq
+                    pending_display_cmd = {"seq": seq, "settings": merged}
+                    device_telemetry["display"] = merged
+                    device_telemetry["display_pending"] = True
+                log_event(
+                    f"[DISPLAY_CMD] Queued seq={seq} mode={merged['mode']} bright={merged['bright']}% style={merged['wstyle']}"
+                )
+                self._send_json(200, {"ok": True, "queued": True, "seq": seq, "display": merged})
+            except Exception as e:
+                self._send_json(400, {"ok": False, "error": str(e)})
+            return
 
         if parsed.path == "/api/device-log":
             token = self.headers.get("X-Device-Token", "")

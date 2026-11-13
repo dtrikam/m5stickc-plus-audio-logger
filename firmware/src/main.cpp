@@ -53,6 +53,31 @@ bool spiffsReady = false;
 bool cloudOnline = false;
 bool screenDimmed = false;
 
+// ─── Display, Brightness & Customizable Watch Face Settings (NVS "ui") ────────
+// screenMode: 0 = Audio Logger, 1 = Watch Face, 2 = Screen Off (Stealth)
+uint8_t screenMode = 0;
+uint8_t lcdBrightness = 85;        // 10..100% (M5StickCPlus AXP192 ScreenBreath scale)
+bool autoDimEnabled = true;
+bool watchFlip = false;            // false = Rotation 1, true = Rotation 3 (180 deg wrist flip)
+uint8_t watchStyle = 0;            // 0 = Digital Bold, 1 = Minimal Stealth, 2 = Analog+Digital, 3 = Retro 7-Seg
+uint8_t watchAccentIdx = 0;        // 0..5 accent colors
+bool watch24h = false;
+bool watchShowSeconds = true;
+bool watchShowDate = true;
+bool watchShowBattery = true;
+bool watchShowRecDot = true;
+bool watchLockRec = false;         // Lock BtnA against pocket presses while in Watch Face mode
+String watchLabel = "M5 AUDIO";
+
+uint32_t lastAppliedCloudCmdSeq = 0;
+volatile bool uiApplyRequested = false;
+volatile bool uiSaveRequested = false;
+String uiToastText = "";
+uint32_t uiToastUntil = 0;
+uint32_t lastAxpBtnPollMillis = 0;
+volatile float cachedBatVoltage = 4.10f;
+volatile bool cachedUsbPowered = false;
+
 int micDownsampleFactor = 1; // Auto-calibrated in initMicrophone() for exact 8000 Hz output
 uint32_t measuredMicHz = 8000;
 
@@ -231,7 +256,7 @@ void syncRtcFromStrings(const String& dateStr, const String& timeStr) {
 
 // ─── Non-Blocking Persistent Flash Logger + Async Cloud Mirror Queue ─────────
 void deviceLog(const String& msg, bool mirrorToCloud = true) {
-    float vbat = M5.Axp.GetBatVoltage();
+    float vbat = cachedBatVoltage;
     String line = "[" + getRtcTimestamp() + " | " + String(vbat, 2) + "V] " + msg;
     Serial.println(line);
 
@@ -304,34 +329,133 @@ void dumpDeviceLogsToSerial() {
     Serial.println("=== END ON-DEVICE FLASH LOG ===");
 }
 
-// ─── Sound / LED / Power Helpers ─────────────────────────────────────────────
+// ─── Sound / LED / Display / Power Helpers ───────────────────────────────────
+static const uint16_t WATCH_ACCENTS[6] = {
+    0x07FF, // 0: Cyan
+    0x262B, // 1: Mint Green
+    0xFD20, // 2: Amber Gold
+    0xF9EB, // 3: Coral Red
+    0xAA9E, // 4: Violet
+    0xFFFF  // 5: Ice White
+};
+
+uint16_t getWatchAccentColor() {
+    return WATCH_ACCENTS[constrain((int)watchAccentIdx, 0, 5)];
+}
+
+int calcWeekday(int y, int m, int d) {
+    static const int t[] = {0, 3, 2, 5, 0, 3, 5, 1, 4, 6, 2, 4};
+    if (m < 3) y -= 1;
+    return (y + y / 4 - y / 100 + y / 400 + t[constrain(m, 1, 12) - 1] + d) % 7;
+}
+
+String sanitizeWatchLabel(const String& raw) {
+    String out;
+    for (size_t i = 0; i < raw.length() && out.length() < 16; i++) {
+        char c = raw[i];
+        if (c >= 32 && c <= 126 && c != '<' && c != '>' && c != '"' && c != '\'') {
+            out += c;
+        }
+    }
+    out.trim();
+    return out;
+}
+
+void saveUiSettingsToNvs() {
+    if (!prefs.begin("ui", false)) return;
+    if (prefs.getUChar("mode", 255) != screenMode) prefs.putUChar("mode", screenMode);
+    if (prefs.getUChar("bright", 255) != lcdBrightness) prefs.putUChar("bright", lcdBrightness);
+    if (prefs.getBool("adim", !autoDimEnabled) != autoDimEnabled) prefs.putBool("adim", autoDimEnabled);
+    if (prefs.getBool("flip", !watchFlip) != watchFlip) prefs.putBool("flip", watchFlip);
+    if (prefs.getUChar("wstyle", 255) != watchStyle) prefs.putUChar("wstyle", watchStyle);
+    if (prefs.getUChar("wcol", 255) != watchAccentIdx) prefs.putUChar("wcol", watchAccentIdx);
+    if (prefs.getBool("w24", !watch24h) != watch24h) prefs.putBool("w24", watch24h);
+    if (prefs.getBool("wsec", !watchShowSeconds) != watchShowSeconds) prefs.putBool("wsec", watchShowSeconds);
+    if (prefs.getBool("wdate", !watchShowDate) != watchShowDate) prefs.putBool("wdate", watchShowDate);
+    if (prefs.getBool("wbat", !watchShowBattery) != watchShowBattery) prefs.putBool("wbat", watchShowBattery);
+    if (prefs.getBool("wdot", !watchShowRecDot) != watchShowRecDot) prefs.putBool("wdot", watchShowRecDot);
+    if (prefs.getBool("wlock", !watchLockRec) != watchLockRec) prefs.putBool("wlock", watchLockRec);
+    if (prefs.getString("wtag", "\x01") != watchLabel) prefs.putString("wtag", watchLabel);
+    prefs.end();
+}
+
+void loadUiSettingsFromNvs() {
+    if (!prefs.begin("ui", true)) {
+        saveUiSettingsToNvs();
+        return;
+    }
+    screenMode = constrain((int)prefs.getUChar("mode", 0), 0, 2);
+    lcdBrightness = constrain((int)prefs.getUChar("bright", 85), 10, 100);
+    autoDimEnabled = prefs.getBool("adim", true);
+    watchFlip = prefs.getBool("flip", false);
+    watchStyle = constrain((int)prefs.getUChar("wstyle", 0), 0, 3);
+    watchAccentIdx = constrain((int)prefs.getUChar("wcol", 0), 0, 5);
+    watch24h = prefs.getBool("w24", false);
+    watchShowSeconds = prefs.getBool("wsec", true);
+    watchShowDate = prefs.getBool("wdate", true);
+    watchShowBattery = prefs.getBool("wbat", true);
+    watchShowRecDot = prefs.getBool("wdot", true);
+    watchLockRec = prefs.getBool("wlock", false);
+    if (prefs.isKey("wtag")) {
+        watchLabel = sanitizeWatchLabel(prefs.getString("wtag", "M5 AUDIO"));
+    }
+    prefs.end();
+}
+
+void applyDisplayHardware() {
+    M5.Lcd.setRotation(watchFlip ? 3 : 1);
+    if (screenMode == 2) {
+        M5.Axp.SetLDO2(false);
+        screenDimmed = true;
+    } else {
+        M5.Axp.SetLDO2(true);
+        uint8_t targetBright = screenDimmed ? (uint8_t)min((int)lcdBrightness, 22) : lcdBrightness;
+        M5.Axp.ScreenBreath(constrain((int)targetBright, 10, 100));
+    }
+}
+
+void showUiToast(const String& msg, uint32_t durationMs = 1500) {
+    uiToastText = msg;
+    uiToastUntil = millis() + durationMs;
+}
+
 void setRedLed(bool on) {
     digitalWrite(PIN_RED_LED, on ? LOW : HIGH);
 }
 
+void refreshPowerTelemetryOnCore1() {
+    float v = M5.Axp.GetBatVoltage();
+    if (v > 2.0f && v < 5.0f) {
+        cachedBatVoltage = v;
+    }
+    cachedUsbPowered = (M5.Axp.GetVBusVoltage() > 4.5f);
+}
+
 bool isUsbPowered() {
-    return M5.Axp.GetVBusVoltage() > 4.5f;
+    return cachedUsbPowered;
 }
 
 void wakeScreen() {
     lastInteractionMillis = millis();
+    if (screenMode == 2) return; // Respect explicit Screen Off stealth mode
     if (screenDimmed) {
-        M5.Axp.ScreenBreath(11);
         screenDimmed = false;
+        applyDisplayHardware();
     }
 }
 
 void checkAutoDimScreen() {
-    if (isUsbPowered()) {
+    if (screenMode == 2) return;
+    if (!autoDimEnabled || isUsbPowered()) {
         if (screenDimmed) {
-            M5.Axp.ScreenBreath(11);
             screenDimmed = false;
+            applyDisplayHardware();
         }
         return;
     }
     if (!screenDimmed && (millis() - lastInteractionMillis > 15000)) {
-        M5.Axp.ScreenBreath(7);
         screenDimmed = true;
+        applyDisplayHardware();
     }
 }
 
@@ -413,7 +537,7 @@ void initMicrophone() {
 }
 
 // ─── Draw UI on 240x135 Color TFT ────────────────────────────────────────────
-void drawScreen() {
+void drawLoggerScreen() {
     canvas.fillSprite(TFT_BLACK);
 
     // 1. Top Header Bar (y: 0..22)
@@ -443,9 +567,7 @@ void drawScreen() {
     }
 
     float vbat = M5.Axp.GetBatVoltage();
-    int batPct = (int)((vbat - 3.3f) / (4.15f - 3.3f) * 100.0f);
-    if (batPct > 100) batPct = 100;
-    if (batPct < 0) batPct = 0;
+    int batPct = constrain((int)((vbat - 3.3f) / (4.15f - 3.3f) * 100.0f), 0, 100);
     bool usbOn = isUsbPowered();
     uint16_t batColor = usbOn ? 0x07E0 : (batPct > 25 ? TFT_WHITE : TFT_RED);
     canvas.setTextColor(batColor, 0x10A2);
@@ -478,7 +600,6 @@ void drawScreen() {
         canvas.setTextColor(TFT_YELLOW, cardBg);
         canvas.drawRightString(timeStr, 226, 35, 2);
 
-        // Show clear non-blocking listening + background upload status
         String subLine = bgUploadInProgress
             ? ("Listening + BgUpload #" + String(chunksSentSession + 1))
             : ("Listening (" + String(activeCaptureBytes / 1024) + "KB / " + String(CLIP_BUFFER_BYTES / 1024) + "KB)");
@@ -511,7 +632,249 @@ void drawScreen() {
     canvas.drawString(statsBuf, 6, 112, 1);
 
     canvas.setTextColor(0x7BEF, TFT_BLACK);
-    canvas.drawString("M5:Rec/Stop  |  Side:Email / Mode", 6, 124, 1);
+    canvas.drawString("M5:Rec  Side:Email/Net  Pwr:Watch/Bright", 6, 124, 1);
+}
+
+void drawWatchScreen() {
+    canvas.fillSprite(TFT_BLACK);
+    canvas.setTextSize(1);
+    uint16_t accent = getWatchAccentColor();
+
+    RTC_DateTypeDef d;
+    RTC_TimeTypeDef t;
+    M5.Rtc.GetDate(&d);
+    M5.Rtc.GetTime(&t);
+    bool timeValid = (d.Year >= 2025 && d.Year <= 2035);
+
+    float vbat = M5.Axp.GetBatVoltage();
+    int batPct = constrain((int)((vbat - 3.3f) / (4.15f - 3.3f) * 100.0f), 0, 100);
+    bool usbOn = isUsbPowered();
+    char batBuf[16];
+    if (usbOn) snprintf(batBuf, sizeof(batBuf), "USB %d%%", batPct);
+    else snprintf(batBuf, sizeof(batBuf), "%d%%", batPct);
+
+    int dispHr = t.Hours;
+    const char* ampm = "";
+    if (!watch24h) {
+        ampm = (t.Hours >= 12) ? "PM" : "AM";
+        dispHr = t.Hours % 12;
+        if (dispHr == 0) dispHr = 12;
+    }
+
+    char hmStr[8] = "--:--";
+    char secStr[6] = "";
+    char dateBuf[24] = "Syncing Clock...";
+    static const char* WDAYS[7] = {"Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"};
+    static const char* MONTHS[13] = {"", "Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"};
+
+    if (timeValid) {
+        if (watch24h) snprintf(hmStr, sizeof(hmStr), "%02d:%02d", dispHr, t.Minutes);
+        else snprintf(hmStr, sizeof(hmStr), "%d:%02d", dispHr, t.Minutes);
+        snprintf(secStr, sizeof(secStr), "%02d", t.Seconds);
+        int wd = calcWeekday(d.Year, d.Month, d.Date);
+        int mo = constrain((int)d.Month, 1, 12);
+        snprintf(dateBuf, sizeof(dateBuf), "%s, %02d %s %04d", WDAYS[wd], d.Date, MONTHS[mo], d.Year);
+    }
+
+    bool recBlink = ((millis() / 600) % 2 == 0);
+    bool showDot = (isRecording && watchShowRecDot);
+
+    if (watchStyle == 1) {
+        // Style 1: Minimal Stealth
+        if (showDot) {
+            if (recBlink) canvas.fillCircle(12, 12, 4, forceOfflineMode ? TFT_ORANGE : TFT_RED);
+            else canvas.drawCircle(12, 12, 4, forceOfflineMode ? TFT_ORANGE : TFT_RED);
+        }
+        if (watchLabel.length() > 0) {
+            canvas.setTextColor(0x7BEF, TFT_BLACK);
+            canvas.drawString(watchLabel, showDot ? 22 : 8, 6, 1);
+        }
+        if (watchShowBattery) {
+            canvas.setTextColor(usbOn ? 0x07E0 : (batPct > 20 ? 0x9CF3 : TFT_RED), TFT_BLACK);
+            canvas.drawRightString(batBuf, 232, 6, 1);
+        }
+        if (timeValid) {
+            canvas.setTextColor(TFT_WHITE, TFT_BLACK);
+            canvas.drawCentreString(hmStr, 120, 32, 6);
+            if (watchShowSeconds || !watch24h) {
+                char subT[16];
+                if (watchShowSeconds && !watch24h) snprintf(subT, sizeof(subT), ":%s %s", secStr, ampm);
+                else if (watchShowSeconds) snprintf(subT, sizeof(subT), ":%s", secStr);
+                else snprintf(subT, sizeof(subT), "%s", ampm);
+                canvas.setTextColor(accent, TFT_BLACK);
+                canvas.drawCentreString(subT, 120, 84, 2);
+            }
+            if (watchShowDate) {
+                canvas.setTextColor(0xBDF7, TFT_BLACK);
+                canvas.drawCentreString(dateBuf, 120, 105, 2);
+            }
+            if (watchShowSeconds) {
+                int barW = (t.Seconds * 232) / 59;
+                canvas.fillRect(4, 130, barW, 3, accent);
+            }
+        } else {
+            canvas.setTextColor(accent, TFT_BLACK);
+            canvas.drawCentreString("Syncing Clock...", 120, 56, 2);
+        }
+    } else if (watchStyle == 2) {
+        // Style 2: Analog Dial + Digital Sidebar
+        int cx = 64, cy = 67, rad = 54;
+        canvas.drawCircle(cx, cy, rad, accent);
+        canvas.drawCircle(cx, cy, rad - 1, 0x2104);
+        for (int a = 0; a < 12; a++) {
+            float radAng = (a * 30.0f - 90.0f) * 0.01745329f;
+            int rIn = (a % 3 == 0) ? rad - 9 : rad - 5;
+            canvas.drawLine(cx + (int)(cosf(radAng) * rIn), cy + (int)(sinf(radAng) * rIn),
+                            cx + (int)(cosf(radAng) * (rad - 2)), cy + (int)(sinf(radAng) * (rad - 2)),
+                            (a % 3 == 0) ? TFT_WHITE : 0x7BEF);
+        }
+        if (timeValid) {
+            float hrAng = (((t.Hours % 12) + t.Minutes / 60.0f) * 30.0f - 90.0f) * 0.01745329f;
+            float minAng = ((t.Minutes + t.Seconds / 60.0f) * 6.0f - 90.0f) * 0.01745329f;
+            float secAng = (t.Seconds * 6.0f - 90.0f) * 0.01745329f;
+            int hx = cx + (int)(cosf(hrAng) * 28), hy = cy + (int)(sinf(hrAng) * 28);
+            int mx = cx + (int)(cosf(minAng) * 42), my = cy + (int)(sinf(minAng) * 42);
+            canvas.drawLine(cx, cy, hx, hy, TFT_WHITE);
+            canvas.drawLine(cx + 1, cy, hx + 1, hy, TFT_WHITE);
+            canvas.drawLine(cx, cy, mx, my, 0xCE79);
+            if (watchShowSeconds) {
+                canvas.drawLine(cx, cy, cx + (int)(cosf(secAng) * 46), cy + (int)(sinf(secAng) * 46), accent);
+            }
+        }
+        canvas.fillCircle(cx, cy, 4, accent);
+
+        int rx = 128;
+        if (showDot) {
+            if (recBlink) canvas.fillCircle(rx + 4, 14, 4, forceOfflineMode ? TFT_ORANGE : TFT_RED);
+            else canvas.drawCircle(rx + 4, 14, 4, forceOfflineMode ? TFT_ORANGE : TFT_RED);
+        }
+        if (watchLabel.length() > 0) {
+            canvas.setTextColor(accent, TFT_BLACK);
+            canvas.drawString(watchLabel.substring(0, 10), showDot ? rx + 13 : rx, 7, 2);
+        }
+        if (timeValid) {
+            canvas.setTextColor(TFT_WHITE, TFT_BLACK);
+            canvas.drawString(hmStr, rx, 36, 4);
+            char subRight[16] = "";
+            if (watchShowSeconds && !watch24h) snprintf(subRight, sizeof(subRight), ":%s %s", secStr, ampm);
+            else if (watchShowSeconds) snprintf(subRight, sizeof(subRight), ":%s", secStr);
+            else if (!watch24h) snprintf(subRight, sizeof(subRight), "%s", ampm);
+            if (subRight[0]) {
+                canvas.setTextColor(accent, TFT_BLACK);
+                canvas.drawString(subRight, rx, 66, 2);
+            }
+            if (watchShowDate) {
+                int wd = calcWeekday(d.Year, d.Month, d.Date);
+                int mo = constrain((int)d.Month, 1, 12);
+                char shortDate[18];
+                snprintf(shortDate, sizeof(shortDate), "%s %02d %s", WDAYS[wd], d.Date, MONTHS[mo]);
+                canvas.setTextColor(0xBDF7, TFT_BLACK);
+                canvas.drawString(shortDate, rx, 88, 2);
+            }
+        } else {
+            canvas.setTextColor(0xBDF7, TFT_BLACK);
+            canvas.drawString("Syncing...", rx, 48, 2);
+        }
+        if (watchShowBattery) {
+            canvas.setTextColor(usbOn ? 0x07E0 : 0x9CF3, TFT_BLACK);
+            canvas.drawString(String(batBuf) + (watchLockRec ? " LOCK" : ""), rx, 112, 1);
+        }
+    } else if (watchStyle == 3) {
+        // Style 3: Retro 7-Segment LED Clock
+        canvas.fillRect(0, 0, 240, 20, 0x0841);
+        if (showDot) {
+            if (recBlink) canvas.fillCircle(10, 10, 4, forceOfflineMode ? TFT_ORANGE : TFT_RED);
+            else canvas.drawCircle(10, 10, 4, forceOfflineMode ? TFT_ORANGE : TFT_RED);
+        }
+        canvas.setTextColor(accent, 0x0841);
+        canvas.drawString(watchLabel.length() > 0 ? watchLabel : "7-SEG", showDot ? 20 : 6, 3, 2);
+        if (watchShowBattery) {
+            canvas.setTextColor(usbOn ? 0x07E0 : TFT_WHITE, 0x0841);
+            canvas.drawRightString(String(batBuf) + (watchLockRec ? " [L]" : ""), 234, 6, 1);
+        }
+        if (timeValid) {
+            canvas.setTextColor(accent, TFT_BLACK);
+            if (watchShowSeconds || !watch24h) {
+                canvas.drawString(hmStr, 10, 34, 7);
+                if (watchShowSeconds) {
+                    canvas.drawString(secStr, 174, 34, 4);
+                }
+                if (!watch24h) {
+                    canvas.setTextColor(0xCE79, TFT_BLACK);
+                    canvas.drawString(ampm, 174, 64, 2);
+                }
+            } else {
+                canvas.drawCentreString(hmStr, 120, 34, 7);
+            }
+            if (watchShowDate) {
+                canvas.fillRoundRect(8, 99, 224, 28, 6, 0x1082);
+                canvas.setTextColor(TFT_WHITE, 0x1082);
+                canvas.drawCentreString(dateBuf, 120, 105, 2);
+            }
+        } else {
+            canvas.setTextColor(accent, TFT_BLACK);
+            canvas.drawCentreString("SYNCING RTC...", 120, 56, 2);
+        }
+    } else {
+        // Style 0: Digital Bold (Default)
+        canvas.fillRect(0, 0, 240, 22, 0x10A2);
+        if (showDot) {
+            if (recBlink) canvas.fillCircle(11, 11, 4, forceOfflineMode ? TFT_ORANGE : TFT_RED);
+            else canvas.drawCircle(11, 11, 4, forceOfflineMode ? TFT_ORANGE : TFT_RED);
+        }
+        String topTxt = watchLabel.length() > 0 ? watchLabel : "WATCH";
+        if (watchLockRec) topTxt += " [LOCK]";
+        canvas.setTextColor(TFT_WHITE, 0x10A2);
+        canvas.drawString(topTxt, showDot ? 21 : 6, 4, 2);
+        if (watchShowBattery) {
+            canvas.setTextColor(usbOn ? 0x07E0 : (batPct > 25 ? TFT_WHITE : TFT_RED), 0x10A2);
+            canvas.drawRightString(batBuf, 234, 4, 2);
+        }
+        if (timeValid) {
+            canvas.setTextColor(TFT_WHITE, TFT_BLACK);
+            if (watchShowSeconds || !watch24h) {
+                canvas.drawString(hmStr, 12, 34, 6);
+                if (watchShowSeconds) {
+                    canvas.setTextColor(accent, TFT_BLACK);
+                    canvas.drawString(":" + String(secStr), 168, 34, 4);
+                }
+                if (!watch24h) {
+                    canvas.setTextColor(0xCE79, TFT_BLACK);
+                    canvas.drawString(ampm, 174, 64, 2);
+                }
+            } else {
+                canvas.drawCentreString(hmStr, 120, 34, 6);
+            }
+            if (watchShowDate) {
+                canvas.fillRoundRect(8, 98, 224, 28, 6, 0x0841);
+                canvas.drawRoundRect(8, 98, 224, 28, 6, accent);
+                canvas.setTextColor(TFT_WHITE, 0x0841);
+                canvas.drawCentreString(dateBuf, 120, 104, 2);
+            }
+        } else {
+            canvas.setTextColor(accent, TFT_BLACK);
+            canvas.drawCentreString("Waiting for RTC Sync", 120, 56, 2);
+        }
+    }
+}
+
+void drawScreen() {
+    if (screenMode == 2) return; // Screen Off stealth mode
+
+    if (screenMode == 1) {
+        drawWatchScreen();
+    } else {
+        drawLoggerScreen();
+    }
+
+    if (uiToastText.length() > 0 && millis() < uiToastUntil) {
+        canvas.fillRoundRect(24, 102, 192, 26, 6, 0x000F);
+        canvas.drawRoundRect(24, 102, 192, 26, 6, 0x07FF);
+        canvas.setTextColor(TFT_WHITE, 0x000F);
+        canvas.drawCentreString(uiToastText, 120, 107, 2);
+    } else if (uiToastText.length() > 0 && millis() >= uiToastUntil) {
+        uiToastText = "";
+    }
 
     canvas.pushSprite(0, 0);
 }
@@ -603,6 +966,99 @@ bool writeAllToClient(WiFiClient& client, const uint8_t* buf, size_t len) {
     return true;
 }
 
+bool jsonHasKey(const String& json, const char* key) {
+    String pat = String("\"") + key + "\"";
+    return json.indexOf(pat) >= 0;
+}
+
+int jsonGetInt(const String& json, const char* key, int fallback) {
+    String pat = String("\"") + key + "\":";
+    int idx = json.indexOf(pat);
+    if (idx < 0) return fallback;
+    int p = idx + pat.length();
+    while (p < (int)json.length() && (json[p] == ' ' || json[p] == '\t')) p++;
+    if (p < (int)json.length() && json[p] == '"') p++;
+    return json.substring(p).toInt();
+}
+
+bool jsonGetBool(const String& json, const char* key, bool fallback) {
+    String pat = String("\"") + key + "\":";
+    int idx = json.indexOf(pat);
+    if (idx < 0) return fallback;
+    int p = idx + pat.length();
+    while (p < (int)json.length() && (json[p] == ' ' || json[p] == '\t')) p++;
+    String tail = json.substring(p, min((int)json.length(), p + 6));
+    if (tail.startsWith("true") || tail.startsWith("1")) return true;
+    if (tail.startsWith("false") || tail.startsWith("0")) return false;
+    return fallback;
+}
+
+String jsonGetStr(const String& json, const char* key, const String& fallback) {
+    String pat = String("\"") + key + "\":";
+    int idx = json.indexOf(pat);
+    if (idx < 0) return fallback;
+    int p = json.indexOf('"', idx + pat.length());
+    if (p < 0) return fallback;
+    int q = json.indexOf('"', p + 1);
+    while (q > 0 && json[q - 1] == '\\') {
+        q = json.indexOf('"', q + 1);
+    }
+    if (q < 0) return fallback;
+    String raw = json.substring(p + 1, q);
+    raw.replace("\\\"", "\"");
+    raw.replace("\\\\", "\\");
+    return raw;
+}
+
+void applyDisplayFromJson(const String& body) {
+    if (jsonHasKey(body, "mode")) screenMode = constrain(jsonGetInt(body, "mode", screenMode), 0, 2);
+    if (jsonHasKey(body, "bright")) lcdBrightness = constrain(jsonGetInt(body, "bright", lcdBrightness), 10, 100);
+    if (jsonHasKey(body, "adim")) autoDimEnabled = jsonGetBool(body, "adim", autoDimEnabled);
+    if (jsonHasKey(body, "flip")) watchFlip = jsonGetBool(body, "flip", watchFlip);
+    if (jsonHasKey(body, "wstyle")) watchStyle = constrain(jsonGetInt(body, "wstyle", watchStyle), 0, 3);
+    if (jsonHasKey(body, "wcol")) watchAccentIdx = constrain(jsonGetInt(body, "wcol", watchAccentIdx), 0, 5);
+    if (jsonHasKey(body, "w24")) watch24h = jsonGetBool(body, "w24", watch24h);
+    if (jsonHasKey(body, "wsec")) watchShowSeconds = jsonGetBool(body, "wsec", watchShowSeconds);
+    if (jsonHasKey(body, "wdate")) watchShowDate = jsonGetBool(body, "wdate", watchShowDate);
+    if (jsonHasKey(body, "wbat")) watchShowBattery = jsonGetBool(body, "wbat", watchShowBattery);
+    if (jsonHasKey(body, "wdot")) watchShowRecDot = jsonGetBool(body, "wdot", watchShowRecDot);
+    if (jsonHasKey(body, "wlock")) watchLockRec = jsonGetBool(body, "wlock", watchLockRec);
+    if (jsonHasKey(body, "wtag")) watchLabel = sanitizeWatchLabel(jsonGetStr(body, "wtag", watchLabel));
+}
+
+String jsonEscape(const String& s) {
+    String out;
+    out.reserve(s.length() + 4);
+    for (size_t i = 0; i < s.length(); i++) {
+        char c = s[i];
+        if (c == '\\' || c == '"') out += '\\';
+        if ((unsigned char)c >= 32) out += c;
+    }
+    return out;
+}
+
+String buildDisplayStateJson() {
+    float vbat = M5.Axp.GetBatVoltage();
+    int batPct = constrain((int)((vbat - 3.3f) / (4.15f - 3.3f) * 100.0f), 0, 100);
+    return String("{\"ok\":true,\"mode\":") + String(screenMode) +
+           ",\"bright\":" + String(lcdBrightness) +
+           ",\"adim\":" + (autoDimEnabled ? "true" : "false") +
+           ",\"flip\":" + (watchFlip ? "true" : "false") +
+           ",\"wstyle\":" + String(watchStyle) +
+           ",\"wcol\":" + String(watchAccentIdx) +
+           ",\"w24\":" + (watch24h ? "true" : "false") +
+           ",\"wsec\":" + (watchShowSeconds ? "true" : "false") +
+           ",\"wdate\":" + (watchShowDate ? "true" : "false") +
+           ",\"wbat\":" + (watchShowBattery ? "true" : "false") +
+           ",\"wdot\":" + (watchShowRecDot ? "true" : "false") +
+           ",\"wlock\":" + (watchLockRec ? "true" : "false") +
+           ",\"wtag\":\"" + jsonEscape(watchLabel) + "\"" +
+           ",\"rec\":" + (isRecording ? "true" : "false") +
+           ",\"usb\":" + (isUsbPowered() ? "true" : "false") +
+           ",\"batPct\":" + String(batPct) +
+           ",\"vbat\":" + String(vbat, 2) + "}";
+}
+
 bool performCloudPing() {
     if (forceOfflineMode || WiFi.status() != WL_CONNECTED || serverHost.length() == 0) {
         cloudOnline = false;
@@ -614,14 +1070,28 @@ bool performCloudPing() {
         cloudOnline = false;
         return false;
     }
-    float vbat = M5.Axp.GetBatVoltage();
+    float vbat = cachedBatVoltage;
     String path = String("/api/ping?rec=") + (isRecording ? "1" : "0") +
                   "&vbat=" + String(vbat, 2) +
                   "&usb=" + (isUsbPowered() ? "1" : "0") +
                   "&chunks=" + String(chunksSentSession) +
                   "&queued=" + String(offlineQueueCount) +
                   "&ip=" + urlEncode(WiFi.localIP().toString()) +
-                  "&ssid=" + urlEncode(wifiSsid);
+                  "&ssid=" + urlEncode(wifiSsid) +
+                  "&mode=" + String(screenMode) +
+                  "&bright=" + String(lcdBrightness) +
+                  "&adim=" + (autoDimEnabled ? "1" : "0") +
+                  "&flip=" + (watchFlip ? "1" : "0") +
+                  "&wstyle=" + String(watchStyle) +
+                  "&wcol=" + String(watchAccentIdx) +
+                  "&w24=" + (watch24h ? "1" : "0") +
+                  "&wsec=" + (watchShowSeconds ? "1" : "0") +
+                  "&wdate=" + (watchShowDate ? "1" : "0") +
+                  "&wbat=" + (watchShowBattery ? "1" : "0") +
+                  "&wdot=" + (watchShowRecDot ? "1" : "0") +
+                  "&wlock=" + (watchLockRec ? "1" : "0") +
+                  "&wtag=" + urlEncode(watchLabel) +
+                  "&dseq=" + String(lastAppliedCloudCmdSeq);
     String req = String("GET ") + path + " HTTP/1.1\r\n" +
                  "Host: " + serverHost + "\r\n";
     if (deviceToken.length() > 0) {
@@ -631,7 +1101,7 @@ bool performCloudPing() {
     client.print(req);
 
     String resp;
-    if (readHttpResponse(client, resp, "}", 3500)) {
+    if (readHttpResponse(client, resp, NULL, 3500)) {
         cloudOnline = true;
         int idx1 = resp.indexOf("\"chunks_today\":");
         if (idx1 >= 0) totalChunksToday = resp.substring(idx1 + 15).toInt();
@@ -644,6 +1114,23 @@ bool performCloudPing() {
             String dStr = resp.substring(dIdx + 14, dIdx + 24);
             String tStr = resp.substring(tIdx + 14, tIdx + 22);
             syncRtcFromStrings(dStr, tStr);
+        }
+
+        int cmdIdx = resp.indexOf("\"display_cmd\":");
+        if (cmdIdx >= 0) {
+            int braceOpen = resp.indexOf('{', cmdIdx);
+            int braceClose = (braceOpen >= 0) ? resp.indexOf('}', braceOpen) : -1;
+            if (braceOpen >= 0 && braceClose > braceOpen) {
+                String cmdJson = resp.substring(braceOpen, braceClose + 1);
+                uint32_t cmdSeq = (uint32_t)max(0, jsonGetInt(cmdJson, "seq", 0));
+                if (cmdSeq > lastAppliedCloudCmdSeq) {
+                    applyDisplayFromJson(cmdJson);
+                    lastAppliedCloudCmdSeq = cmdSeq;
+                    uiSaveRequested = true;
+                    uiApplyRequested = true;
+                    pingRequested = true; // ACK new settings back immediately
+                }
+            }
         }
         return true;
     }
@@ -903,14 +1390,290 @@ void flushAndSwapCaptureBuffer(bool isStopEvent) {
     activeCapturePeakRms = 0;
 }
 
-// ─── Web Server (Local On-Device Log Viewer + Wi-Fi Setup Portal) ────────────
+// ─── Web Server (Local Display/Watch Studio + Log Viewer + NVS Portal) ───────
 void sendCorsHeaders() {
     httpServer.sendHeader("Access-Control-Allow-Origin", "*");
     httpServer.sendHeader("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
+    httpServer.sendHeader("Access-Control-Allow-Headers", "Content-Type, Accept");
     httpServer.sendHeader("Access-Control-Allow-Private-Network", "true");
 }
 
+static const char PORTAL_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>M5StickC Plus Studio &amp; Setup</title>
+<style>
+  :root{--bg:#0b1120;--card:#131c31;--card2:#0f172a;--b:#1e293b;--t:#f1f5f9;--m:#94a3b8;--a:#38bdf8;--g:#22c55e;}
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--t);font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;padding:14px;line-height:1.45}
+  .wrap{max-width:740px;margin:0 auto;display:grid;gap:14px}
+  .card{background:var(--card);border:1px solid var(--b);border-radius:14px;padding:16px}
+  h1{margin:0 0 4px;font-size:1.25rem}
+  h2{margin:0 0 12px;font-size:1.05rem;display:flex;align-items:center;justify-content:space-between;gap:8px}
+  .sub{color:var(--m);font-size:.86rem;margin:0}
+  .badge{font-size:.74rem;padding:3px 9px;border-radius:999px;background:rgba(56,189,248,.14);color:var(--a);border:1px solid rgba(56,189,248,.3)}
+  .badge.ok{background:rgba(34,197,94,.14);color:#4ade80;border-color:rgba(34,197,94,.3)}
+  .grid2{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+  @media(max-width:560px){.grid2{grid-template-columns:1fr}}
+  .seg{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin-bottom:14px}
+  .seg-btn{padding:10px 8px;border-radius:10px;border:1px solid var(--b);background:var(--card2);color:var(--m);font-weight:600;font-size:.86rem;cursor:pointer}
+  .seg-btn.active{background:rgba(56,189,248,.18);color:#fff;border-color:var(--a)}
+  .row{display:flex;align-items:center;justify-content:space-between;gap:10px;margin:10px 0}
+  label.lbl{font-size:.84rem;color:#cbd5e1;font-weight:600;display:block;margin-bottom:4px}
+  input[type=range]{width:100%;accent-color:var(--a);cursor:pointer;height:28px}
+  .presets{display:flex;gap:6px;flex-wrap:wrap;margin:6px 0 12px}
+  .chip{padding:5px 11px;border-radius:999px;border:1px solid var(--b);background:var(--card2);color:#cbd5e1;font-size:.78rem;cursor:pointer}
+  .chip.active,.chip:hover{border-color:var(--a);color:#fff}
+  .swatches{display:flex;gap:10px;flex-wrap:wrap;margin:6px 0 12px}
+  .sw{width:30px;height:30px;border-radius:50%;border:2px solid transparent;cursor:pointer;box-shadow:0 0 0 1px rgba(255,255,255,.15)}
+  .sw.active{border-color:#fff;transform:scale(1.12)}
+  .chk-grid{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:8px}
+  @media(max-width:520px){.chk-grid{grid-template-columns:1fr}}
+  .chk{display:flex;align-items:center;gap:8px;background:var(--card2);border:1px solid var(--b);padding:9px 11px;border-radius:10px;font-size:.84rem;cursor:pointer}
+  .chk input{width:17px;height:17px;accent-color:var(--a);margin:0}
+  input[type=text],input[type=number],input[type=password],select{width:100%;padding:10px 12px;border-radius:10px;border:1px solid var(--b);background:var(--card2);color:var(--t);font-size:.94rem;margin:0 0 10px}
+  .btn{width:100%;padding:11px 14px;border-radius:10px;border:none;background:#2563eb;color:#fff;font-weight:700;font-size:.95rem;cursor:pointer}
+  .btn-sec{display:inline-block;padding:9px 14px;border-radius:10px;background:var(--card2);border:1px solid var(--b);color:var(--a);text-decoration:none;font-size:.86rem;font-weight:600}
+  .prev-wrap{display:flex;justify-content:center;padding:10px;background:#050811;border:1px solid var(--b);border-radius:12px;margin-bottom:12px}
+  canvas{width:240px;height:135px;border-radius:6px;border:2px solid #334155;background:#000}
+  .meta{font-size:.84rem;color:var(--m);display:flex;flex-wrap:wrap;gap:12px}
+  .meta strong{color:var(--t)}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="card">
+    <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:10px;flex-wrap:wrap">
+      <div>
+        <h1>🎙️ M5StickC Plus Studio</h1>
+        <p class="sub">Direct On-Device Display, Watch Face &amp; Provisioning Portal</p>
+      </div>
+      <a class="btn-sec" href="/logs">📄 Flash Logs</a>
+    </div>
+    <div class="meta" style="margin-top:12px" id="devMeta">Loading device status...</div>
+  </div>
+
+  <div class="card">
+    <h2><span>🎛️ Screen &amp; Brightness Control</span><span class="badge ok" id="saveBadge">Synced</span></h2>
+    <label class="lbl">Active Screen Mode (or tap Bottom-Left Power button)</label>
+    <div class="seg">
+      <button type="button" class="seg-btn" data-mode="0">🎙️ Audio Logger</button>
+      <button type="button" class="seg-btn" data-mode="1">⌚ Watch Face</button>
+      <button type="button" class="seg-btn" data-mode="2">🌙 Screen Off</button>
+    </div>
+
+    <div class="row" style="margin-bottom:2px">
+      <label class="lbl" style="margin:0">Backlight Brightness</label>
+      <span class="badge" id="brightLbl">85%</span>
+    </div>
+    <input type="range" id="brightRng" min="10" max="100" step="1" value="85">
+    <div class="presets">
+      <button type="button" class="chip" data-bright="25">25% Night</button>
+      <button type="button" class="chip" data-bright="55">55% Indoor</button>
+      <button type="button" class="chip" data-bright="85">85% Crisp</button>
+      <button type="button" class="chip" data-bright="100">100% Max</button>
+    </div>
+
+    <div class="chk-grid">
+      <label class="chk"><input type="checkbox" id="adimChk">Auto-dim on battery (15s)</label>
+      <label class="chk"><input type="checkbox" id="flipChk">Flip screen 180&deg; (left/right wrist)</label>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2><span>⌚ Watch Face Customizer</span><span class="badge" id="styleBadge">Preview</span></h2>
+    <div class="prev-wrap"><canvas id="watchPrev" width="240" height="135"></canvas></div>
+
+    <div class="grid2">
+      <div>
+        <label class="lbl">Watch Style</label>
+        <select id="wstyleSel">
+          <option value="0">Digital Bold</option>
+          <option value="1">Minimal Stealth</option>
+          <option value="2">Analog + Digital</option>
+          <option value="3">Retro 7-Segment</option>
+        </select>
+      </div>
+      <div>
+        <label class="lbl">Custom Watch Label (max 16 chars)</label>
+        <input type="text" id="wtagInp" maxlength="16" placeholder="M5 AUDIO">
+      </div>
+    </div>
+
+    <label class="lbl">Accent Color</label>
+    <div class="swatches" id="swatchBox">
+      <button type="button" class="sw" data-col="0" style="background:#00e5ff" title="Cyan"></button>
+      <button type="button" class="sw" data-col="1" style="background:#22c55e" title="Mint"></button>
+      <button type="button" class="sw" data-col="2" style="background:#f59e0b" title="Amber"></button>
+      <button type="button" class="sw" data-col="3" style="background:#f43f5e" title="Coral"></button>
+      <button type="button" class="sw" data-col="4" style="background:#a855f7" title="Violet"></button>
+      <button type="button" class="sw" data-col="5" style="background:#ffffff" title="White"></button>
+    </div>
+
+    <div class="chk-grid">
+      <label class="chk"><input type="checkbox" id="w24Chk">24-hour format</label>
+      <label class="chk"><input type="checkbox" id="wsecChk">Show seconds</label>
+      <label class="chk"><input type="checkbox" id="wdateChk">Show date &amp; day</label>
+      <label class="chk"><input type="checkbox" id="wbatChk">Show battery %</label>
+      <label class="chk"><input type="checkbox" id="wdotChk">Subtle REC dot</label>
+      <label class="chk"><input type="checkbox" id="wlockChk">Lock M5 rec btn in Watch</label>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2><span>📶 Wi-Fi &amp; Cloud NVS Settings</span><span class="badge">Reboots</span></h2>
+    <form method="POST" action="/save">
+      <label class="lbl">2.4 GHz Wi-Fi SSID</label><input type="text" name="s" id="ssidInp" required>
+      <label class="lbl">Wi-Fi Password</label><input type="password" name="p" placeholder="Leave blank to keep current">
+      <label class="lbl">Cloud Server Host / IP</label><input type="text" name="h" id="hostInp" placeholder="e.g. your-server.example.com">
+      <label class="lbl">Cloud Server Port</label><input type="number" name="pt" id="portInp" value="8765">
+      <label class="lbl">Device Auth Token</label><input type="password" name="t" placeholder="Leave blank to keep current">
+      <button type="submit" class="btn">Save Credentials &amp; Reboot</button>
+    </form>
+  </div>
+</div>
+
+<script>
+const COLS = ['#00e5ff','#22c55e','#f59e0b','#f43f5e','#a855f7','#ffffff'];
+let st = {mode:0,bright:85,adim:true,flip:false,wstyle:0,wcol:0,w24:false,wsec:true,wdate:true,wbat:true,wdot:true,wlock:false,wtag:'M5 AUDIO',rec:false,batPct:95,usb:true};
+const $ = id => document.getElementById(id);
+
+function drawPreview(){
+  const cv = $('watchPrev'), ctx = cv.getContext('2d');
+  ctx.fillStyle='#000'; ctx.fillRect(0,0,240,135);
+  const acc = COLS[st.wcol] || COLS[0];
+  const d = new Date();
+  let hr = d.getHours(), mn = String(d.getMinutes()).padStart(2,'0'), sc = String(d.getSeconds()).padStart(2,'0');
+  const ap = hr>=12?'PM':'AM';
+  const dh = st.w24 ? String(hr).padStart(2,'0') : String((hr%12)||12);
+  const hm = dh+':'+mn;
+  const ds = d.toLocaleDateString(undefined,{weekday:'short',day:'2-digit',month:'short',year:'numeric'});
+  const batTxt = st.usb?('USB '+st.batPct+'%'):(st.batPct+'%');
+  if(st.wstyle == 1){
+    if(st.wdot){ctx.beginPath();ctx.arc(12,12,4,0,6.3);ctx.fillStyle=st.rec?'#ef4444':'#334155';ctx.fill();}
+    ctx.fillStyle='#64748b';ctx.font='10px sans-serif';ctx.textAlign='left';ctx.fillText(st.wtag||'',st.wdot?22:8,15);
+    if(st.wbat){ctx.textAlign='right';ctx.fillStyle='#4ade80';ctx.fillText(batTxt,232,15);}
+    ctx.fillStyle='#fff';ctx.font='bold 42px monospace';ctx.textAlign='center';ctx.fillText(hm,120,72);
+    ctx.fillStyle=acc;ctx.font='13px monospace';
+    ctx.fillText((st.wsec?(':'+sc+' '):'')+(!st.w24?ap:''),120,94);
+    if(st.wdate){ctx.fillStyle='#94a3b8';ctx.font='13px sans-serif';ctx.fillText(ds,120,116);}
+    if(st.wsec){ctx.fillStyle=acc;ctx.fillRect(4,130,(d.getSeconds()/59)*232,3);}
+  } else if(st.wstyle == 2){
+    const cx=64,cy=67,r=52;
+    ctx.strokeStyle=acc;ctx.lineWidth=2;ctx.beginPath();ctx.arc(cx,cy,r,0,6.3);ctx.stroke();
+    ctx.lineWidth=1.5;
+    const hA=((hr%12)+d.getMinutes()/60)*Math.PI/6-Math.PI/2;
+    const mA=(d.getMinutes()+d.getSeconds()/60)*Math.PI/30-Math.PI/2;
+    const sA=d.getSeconds()*Math.PI/30-Math.PI/2;
+    ctx.strokeStyle='#fff';ctx.beginPath();ctx.moveTo(cx,cy);ctx.lineTo(cx+Math.cos(hA)*28,cy+Math.sin(hA)*28);ctx.stroke();
+    ctx.strokeStyle='#cbd5e1';ctx.beginPath();ctx.moveTo(cx,cy);ctx.lineTo(cx+Math.cos(mA)*40,cy+Math.sin(mA)*40);ctx.stroke();
+    if(st.wsec){ctx.strokeStyle=acc;ctx.beginPath();ctx.moveTo(cx,cy);ctx.lineTo(cx+Math.cos(sA)*44,cy+Math.sin(sA)*44);ctx.stroke();}
+    ctx.fillStyle=acc;ctx.font='bold 12px sans-serif';ctx.textAlign='left';ctx.fillText((st.wtag||'WATCH').slice(0,10),128,20);
+    ctx.fillStyle='#fff';ctx.font='bold 24px monospace';ctx.fillText(hm,128,56);
+    ctx.fillStyle=acc;ctx.font='13px monospace';ctx.fillText((st.wsec?(':'+sc+' '):'')+(!st.w24?ap:''),128,76);
+    if(st.wdate){ctx.fillStyle='#cbd5e1';ctx.font='12px sans-serif';ctx.fillText(ds.slice(0,12),128,98);}
+    if(st.wbat){ctx.fillStyle='#4ade80';ctx.font='11px monospace';ctx.fillText(batTxt+(st.wlock?' LOCK':''),128,118);}
+  } else {
+    ctx.fillStyle=st.wstyle==3?'#0a120d':'#10203a'; ctx.fillRect(0,0,240,22);
+    if(st.wdot){ctx.beginPath();ctx.arc(11,11,4,0,6.3);ctx.fillStyle=st.rec?'#ef4444':'#475569';ctx.fill();}
+    ctx.fillStyle='#fff';ctx.font='bold 12px sans-serif';ctx.textAlign='left';
+    ctx.fillText((st.wtag||'WATCH')+(st.wlock?' [LOCK]':''),st.wdot?21:8,15);
+    if(st.wbat){ctx.textAlign='right';ctx.fillStyle='#4ade80';ctx.fillText(batTxt,234,15);}
+    ctx.fillStyle=(st.wstyle==3)?acc:'#fff';
+    ctx.font=(st.wstyle==3)?'bold 40px monospace':'bold 42px sans-serif';
+    ctx.textAlign=(st.wsec||!st.w24)?'left':'center';
+    ctx.fillText(hm,(st.wsec||!st.w24)?12:120,76);
+    if(st.wsec){ctx.fillStyle=acc;ctx.font='bold 20px monospace';ctx.textAlign='left';ctx.fillText(':'+sc,168,56);}
+    if(!st.w24){ctx.fillStyle='#cbd5e1';ctx.font='bold 13px sans-serif';ctx.textAlign='left';ctx.fillText(ap,174,78);}
+    if(st.wdate){
+      ctx.fillStyle='#0b1628';ctx.fillRect(8,98,224,28);
+      ctx.strokeStyle=acc;ctx.strokeRect(8,98,224,28);
+      ctx.fillStyle='#fff';ctx.font='bold 13px sans-serif';ctx.textAlign='center';ctx.fillText(ds,120,117);
+    }
+  }
+}
+
+function syncControls(){
+  document.querySelectorAll('.seg-btn').forEach(b=>b.classList.toggle('active', Number(b.dataset.mode)===Number(st.mode)));
+  $('brightRng').value = st.bright;
+  $('brightLbl').textContent = st.bright + '%';
+  document.querySelectorAll('.chip').forEach(c=>c.classList.toggle('active', Number(c.dataset.bright)===Number(st.bright)));
+  $('adimChk').checked = !!st.adim;
+  $('flipChk').checked = !!st.flip;
+  $('wstyleSel').value = String(st.wstyle);
+  document.querySelectorAll('.sw').forEach(s=>s.classList.toggle('active', Number(s.dataset.col)===Number(st.wcol)));
+  $('w24Chk').checked = !!st.w24;
+  $('wsecChk').checked = !!st.wsec;
+  $('wdateChk').checked = !!st.wdate;
+  $('wbatChk').checked = !!st.wbat;
+  $('wdotChk').checked = !!st.wdot;
+  $('wlockChk').checked = !!st.wlock;
+  if(document.activeElement !== $('wtagInp')) $('wtagInp').value = st.wtag || '';
+  drawPreview();
+}
+
+async function pushDisplay(saveFlag=true){
+  $('saveBadge').textContent = saveFlag ? 'Saving...' : 'Previewing...';
+  try{
+    const payload = {...st, save: !!saveFlag};
+    const r = await fetch('/api/display',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)});
+    const d = await r.json();
+    if(d.ok){ st = {...st, ...d}; $('saveBadge').textContent = saveFlag ? 'Saved NVS ✓' : 'Live ✓'; syncControls(); }
+  }catch(e){ $('saveBadge').textContent = 'Offline'; }
+}
+
+async function loadInfo(){
+  try{
+    const r = await fetch('/api/info');
+    const d = await r.json();
+    st = {...st, ...d};
+    $('devMeta').innerHTML = `<span>State: <strong>${d.rec?'RECORDING':'STANDBY'}</strong></span><span>Mic: <strong>${d.micHz} Hz</strong></span><span>Flash: <strong>${d.spiffsUsedKb}/${d.spiffsTotalKb} KB (${d.queued} queued)</strong></span><span>IP: <strong>${d.ip||'AP 192.168.4.1'}</strong></span>`;
+    $('ssidInp').value = d.ssid || '';
+    $('hostInp').value = d.host || '';
+    $('portInp').value = d.port || 8765;
+    syncControls();
+  }catch(e){}
+}
+
+document.querySelectorAll('.seg-btn').forEach(b=>b.addEventListener('click',()=>{st.mode=Number(b.dataset.mode);syncControls();pushDisplay(true);}));
+$('brightRng').addEventListener('input',e=>{st.bright=Number(e.target.value);syncControls();pushDisplay(false);});
+$('brightRng').addEventListener('change',e=>{st.bright=Number(e.target.value);syncControls();pushDisplay(true);});
+document.querySelectorAll('.chip').forEach(c=>c.addEventListener('click',()=>{st.bright=Number(c.dataset.bright);syncControls();pushDisplay(true);}));
+$('adimChk').addEventListener('change',e=>{st.adim=e.target.checked;pushDisplay(true);});
+$('flipChk').addEventListener('change',e=>{st.flip=e.target.checked;pushDisplay(true);});
+$('wstyleSel').addEventListener('change',e=>{st.wstyle=Number(e.target.value);syncControls();pushDisplay(true);});
+document.querySelectorAll('.sw').forEach(s=>s.addEventListener('click',()=>{st.wcol=Number(s.dataset.col);syncControls();pushDisplay(true);}));
+$('w24Chk').addEventListener('change',e=>{st.w24=e.target.checked;syncControls();pushDisplay(true);});
+$('wsecChk').addEventListener('change',e=>{st.wsec=e.target.checked;syncControls();pushDisplay(true);});
+$('wdateChk').addEventListener('change',e=>{st.wdate=e.target.checked;syncControls();pushDisplay(true);});
+$('wbatChk').addEventListener('change',e=>{st.wbat=e.target.checked;syncControls();pushDisplay(true);});
+$('wdotChk').addEventListener('change',e=>{st.wdot=e.target.checked;syncControls();pushDisplay(true);});
+$('wlockChk').addEventListener('change',e=>{st.wlock=e.target.checked;syncControls();pushDisplay(true);});
+let tagT;
+$('wtagInp').addEventListener('input',e=>{st.wtag=e.target.value.slice(0,16);drawPreview();clearTimeout(tagT);tagT=setTimeout(()=>pushDisplay(true),450);});
+loadInfo();
+setInterval(drawPreview,1000);
+</script>
+</body>
+</html>)rawliteral";
+
+bool routesStarted = false;
+
 void setupHttpRoutes() {
+    if (routesStarted) return;
+    routesStarted = true;
+
+    httpServer.onNotFound([]() {
+        sendCorsHeaders();
+        if (httpServer.method() == HTTP_OPTIONS) {
+            httpServer.send(204);
+            return;
+        }
+        httpServer.send(404, "text/plain", "Not found");
+    });
+
     httpServer.on("/", HTTP_OPTIONS, []() {
         sendCorsHeaders();
         httpServer.send(204);
@@ -918,25 +1681,68 @@ void setupHttpRoutes() {
 
     httpServer.on("/", HTTP_GET, []() {
         sendCorsHeaders();
-        String safeSsid = htmlEscape(wifiSsid);
-        String safeHost = htmlEscape(serverHost);
-        String html = "<!DOCTYPE html><html><head><meta name='viewport' content='width=device-width,initial-scale=1'>"
-                      "<title>M5StickC Plus Audio Logger</title>"
-                      "<style>body{font-family:sans-serif;background:#0f172a;color:#fff;padding:20px;max-width:700px;margin:0 auto;}"
-                      "a{color:#38bdf8;}input,button{width:100%;padding:12px;margin:6px 0 14px;border-radius:8px;border:none;font-size:16px;box-sizing:border-box;}"
-                      "label{font-size:14px;color:#cbd5e1;font-weight:bold;}button{background:#2563eb;color:#fff;font-weight:bold;cursor:pointer;}</style></head><body>"
-                      "<h2>🎙️ M5StickC Plus Audio Logger</h2>"
-                      "<p>State: <strong>" + String(isRecording ? "RECORDING LIVE" : "STANDBY") + "</strong> | Mic Rate: " + String(measuredMicHz) + " Hz</p>"
-                      "<p>SPIFFS Storage: " + String(SPIFFS.usedBytes() / 1024) + " KB used / " + String(SPIFFS.totalBytes() / 1024) + " KB total (" + String(offlineQueueCount) + " queued offline clips)</p>"
-                      "<p><a href='/logs'>📄 View On-Device Flash Logs (/device.log)</a></p>"
-                      "<form method='POST' action='/save'>"
-                      "<label>2.4GHz Wi-Fi SSID:</label><input name='s' value='" + safeSsid + "' required>"
-                      "<label>Wi-Fi Password:</label><input name='p' type='password' placeholder='Enter password (leave blank to keep current)'>"
-                      "<label>Cloud Server Host / IP:</label><input name='h' value='" + safeHost + "' placeholder='e.g. your-server.example.com'>"
-                      "<label>Cloud Server Port:</label><input name='pt' type='number' value='" + String(serverPort) + "'>"
-                      "<label>Device Auth Token:</label><input name='t' type='password' placeholder='Enter token (leave blank to keep current)'>"
-                      "<button type='submit'>Save Settings &amp; Reboot</button></form></body></html>";
-        httpServer.send(200, "text/html", html);
+        httpServer.send_P(200, "text/html", PORTAL_HTML);
+    });
+
+    httpServer.on("/api/info", HTTP_GET, []() {
+        sendCorsHeaders();
+        String base = buildDisplayStateJson();
+        base.remove(base.length() - 1); // Trim trailing '}'
+        String ipStr = (WiFi.status() == WL_CONNECTED) ? WiFi.localIP().toString() : "192.168.4.1";
+        base += String(",\"ssid\":\"") + jsonEscape(wifiSsid) + "\"" +
+                ",\"host\":\"" + jsonEscape(serverHost) + "\"" +
+                ",\"port\":" + String(serverPort) +
+                ",\"ip\":\"" + jsonEscape(ipStr) + "\"" +
+                ",\"micHz\":" + String(measuredMicHz) +
+                ",\"spiffsUsedKb\":" + String(spiffsReady ? SPIFFS.usedBytes() / 1024 : 0) +
+                ",\"spiffsTotalKb\":" + String(spiffsReady ? SPIFFS.totalBytes() / 1024 : 0) +
+                ",\"queued\":" + String(offlineQueueCount) + "}";
+        httpServer.send(200, "application/json", base);
+    });
+
+    httpServer.on("/api/display", HTTP_OPTIONS, []() {
+        sendCorsHeaders();
+        httpServer.send(204);
+    });
+
+    httpServer.on("/api/display", HTTP_GET, []() {
+        sendCorsHeaders();
+        httpServer.send(200, "application/json", buildDisplayStateJson());
+    });
+
+    httpServer.on("/api/display", HTTP_POST, []() {
+        sendCorsHeaders();
+        String plain = httpServer.arg("plain");
+        plain.trim();
+        bool doSave = true;
+        if (plain.startsWith("{")) {
+            applyDisplayFromJson(plain);
+            if (jsonHasKey(plain, "save")) doSave = jsonGetBool(plain, "save", true);
+        } else {
+            if (httpServer.hasArg("mode")) screenMode = constrain(httpServer.arg("mode").toInt(), 0, 2);
+            if (httpServer.hasArg("bright")) lcdBrightness = constrain(httpServer.arg("bright").toInt(), 10, 100);
+            if (httpServer.hasArg("adim")) autoDimEnabled = (httpServer.arg("adim") == "1" || httpServer.arg("adim") == "true");
+            if (httpServer.hasArg("flip")) watchFlip = (httpServer.arg("flip") == "1" || httpServer.arg("flip") == "true");
+            if (httpServer.hasArg("wstyle")) watchStyle = constrain(httpServer.arg("wstyle").toInt(), 0, 3);
+            if (httpServer.hasArg("wcol")) watchAccentIdx = constrain(httpServer.arg("wcol").toInt(), 0, 5);
+            if (httpServer.hasArg("w24")) watch24h = (httpServer.arg("w24") == "1" || httpServer.arg("w24") == "true");
+            if (httpServer.hasArg("wsec")) watchShowSeconds = (httpServer.arg("wsec") == "1" || httpServer.arg("wsec") == "true");
+            if (httpServer.hasArg("wdate")) watchShowDate = (httpServer.arg("wdate") == "1" || httpServer.arg("wdate") == "true");
+            if (httpServer.hasArg("wbat")) watchShowBattery = (httpServer.arg("wbat") == "1" || httpServer.arg("wbat") == "true");
+            if (httpServer.hasArg("wdot")) watchShowRecDot = (httpServer.arg("wdot") == "1" || httpServer.arg("wdot") == "true");
+            if (httpServer.hasArg("wlock")) watchLockRec = (httpServer.arg("wlock") == "1" || httpServer.arg("wlock") == "true");
+            if (httpServer.hasArg("wtag")) watchLabel = sanitizeWatchLabel(httpServer.arg("wtag"));
+            if (httpServer.hasArg("save")) doSave = (httpServer.arg("save") != "0" && httpServer.arg("save") != "false");
+        }
+        screenDimmed = false;
+        lastInteractionMillis = millis();
+        applyDisplayHardware();
+        drawScreen();
+        if (doSave) {
+            saveUiSettingsToNvs();
+            pingRequested = true;
+        }
+        httpServer.send(200, "application/json", buildDisplayStateJson());
     });
 
     httpServer.on("/logs", HTTP_GET, []() {
@@ -1130,12 +1936,33 @@ void checkSerialCommands() {
         } else {
             Serial.println("[CLOUD_ERR] Expected CLOUD:<host>:<port>:<token>");
         }
+    } else if (line.startsWith("BRIGHT:")) {
+        int b = constrain(line.substring(7).toInt(), 10, 100);
+        lcdBrightness = (uint8_t)b;
+        if (screenMode == 2) screenMode = 0;
+        screenDimmed = false;
+        saveUiSettingsToNvs();
+        applyDisplayHardware();
+        showUiToast("Bright: " + String(lcdBrightness) + "%");
+        drawScreen();
+        pingRequested = true;
+        Serial.printf("[UI_CFG] Brightness=%u%%\n", lcdBrightness);
+    } else if (line.startsWith("MODE:")) {
+        screenMode = constrain(line.substring(5).toInt(), 0, 2);
+        screenDimmed = false;
+        saveUiSettingsToNvs();
+        applyDisplayHardware();
+        showUiToast(screenMode == 1 ? "Watch Mode" : (screenMode == 0 ? "Logger Mode" : ""));
+        drawScreen();
+        pingRequested = true;
+        Serial.printf("[UI_CFG] Mode=%u\n", screenMode);
     } else if (line.equalsIgnoreCase("STATUS")) {
         refreshOfflineQueueCount();
-        Serial.printf("[STATUS] WiFi=%d SSID='%s' IP=%s CloudHost=%s:%u TokenSet=%d Cloud=%d OfflineMode=%d Rec=%d BgUp=%d MicHz=%lu Downsample=%d Heap=%uB Chunks=%lu Queued=%lu FlashFree=%uKB\n",
+        Serial.printf("[STATUS] WiFi=%d SSID='%s' IP=%s CloudHost=%s:%u TokenSet=%d Cloud=%d OfflineMode=%d Rec=%d BgUp=%d Mode=%u Bright=%u Style=%u Flip=%d LockRec=%d MicHz=%lu Downsample=%d Heap=%uB Chunks=%lu Queued=%lu FlashFree=%uKB\n",
                       (int)WiFi.status(), wifiSsid.c_str(), WiFi.localIP().toString().c_str(),
                       serverHost.c_str(), serverPort, deviceToken.length() > 0 ? 1 : 0,
                       (int)cloudOnline, (int)forceOfflineMode, (int)isRecording, (int)bgUploadInProgress,
+                      screenMode, lcdBrightness, watchStyle, (int)watchFlip, (int)watchLockRec,
                       measuredMicHz, micDownsampleFactor, ESP.getFreeHeap(),
                       chunksSentSession, offlineQueueCount,
                       spiffsReady ? (SPIFFS.totalBytes() - SPIFFS.usedBytes()) / 1024 : 0);
@@ -1153,8 +1980,9 @@ void setup() {
     pinMode(PIN_RED_LED, OUTPUT);
     setRedLed(false);
 
-    M5.Axp.ScreenBreath(11);
-    M5.Lcd.setRotation(1);
+    refreshPowerTelemetryOnCore1();
+    loadUiSettingsFromNvs();
+    applyDisplayHardware();
     canvas.createSprite(240, 135);
     lastInteractionMillis = millis();
 
@@ -1250,10 +2078,26 @@ void loop() {
     httpServer.handleClient();
     checkAutoDimScreen();
 
-    // Button A (Front M5 Button): Toggle Recording ON / OFF
+    if (uiApplyRequested) {
+        uiApplyRequested = false;
+        screenDimmed = false;
+        lastInteractionMillis = millis();
+        if (uiSaveRequested) {
+            uiSaveRequested = false;
+            saveUiSettingsToNvs();
+        }
+        applyDisplayHardware();
+        showUiToast(screenMode == 1 ? "Watch Updated" : (screenMode == 0 ? "Logger Updated" : ""));
+        drawScreen();
+    }
+
+    // Button A (Front M5 Button): Toggle Recording ON / OFF (optional pocket lock in Watch mode)
     if (M5.BtnA.wasPressed()) {
         wakeScreen();
-        if (!isRecording) {
+        if (screenMode == 1 && watchLockRec) {
+            showUiToast("Locked in Watch", 1600);
+            drawScreen();
+        } else if (!isRecording) {
             startRecordingSession("ButtonA");
         } else {
             stopRecordingSession("ButtonA");
@@ -1275,6 +2119,44 @@ void loop() {
         wakeScreen();
         beepTone(1800, 80);
         summaryRequested = true;
+    }
+
+    // Bottom-Left Power Button (AXP192 PEK, polled every 50ms):
+    //   Short tap (0x02) -> Cycle Screen Mode: Audio Logger -> Watch Face -> Screen Off
+    //   1s Hold   (0x01) -> Cycle Brightness: 40% -> 65% -> 85% -> 100%
+    if (millis() - lastAxpBtnPollMillis >= 50) {
+        lastAxpBtnPollMillis = millis();
+        uint8_t axpBtn = M5.Axp.GetBtnPress();
+        if (axpBtn == 0x02) {
+            screenMode = (screenMode + 1) % 3;
+            screenDimmed = false;
+            lastInteractionMillis = millis();
+            saveUiSettingsToNvs();
+            applyDisplayHardware();
+            if (screenMode == 0) showUiToast("Audio Logger");
+            else if (screenMode == 1) showUiToast("Watch Face");
+            drawScreen();
+            pingRequested = true;
+            deviceLog(String("UI_BTN: Screen Mode -> ") +
+                      (screenMode == 0 ? "LOGGER" : (screenMode == 1 ? "WATCH" : "SCREEN_OFF")), !forceOfflineMode);
+        } else if (axpBtn == 0x01) {
+            if (screenMode == 2) {
+                screenMode = 1;
+            } else {
+                if (lcdBrightness < 55) lcdBrightness = 65;
+                else if (lcdBrightness < 80) lcdBrightness = 85;
+                else if (lcdBrightness < 96) lcdBrightness = 100;
+                else lcdBrightness = 40;
+            }
+            screenDimmed = false;
+            lastInteractionMillis = millis();
+            saveUiSettingsToNvs();
+            applyDisplayHardware();
+            showUiToast("Bright: " + String(lcdBrightness) + "%");
+            drawScreen();
+            pingRequested = true;
+            deviceLog("UI_BTN: Brightness -> " + String(lcdBrightness) + "%", !forceOfflineMode);
+        }
     }
 
     // Continuous Non-Blocking Audio Capture on Core 1
@@ -1308,6 +2190,7 @@ void loop() {
 
     if (millis() - lastUiRefreshMillis > 250) {
         lastUiRefreshMillis = millis();
+        refreshPowerTelemetryOnCore1();
         drawScreen();
     }
 

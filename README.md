@@ -18,10 +18,11 @@ Designed with **zero hardcoded secrets**: all Wi-Fi credentials, Cloud server en
 
 ### Embedded ESP32 Firmware (`firmware/src/main.cpp`)
 * **True Dual-Core Non-Blocking Streaming**: Core 1 continuously captures PDM microphone audio at `16 kHz` into dual `8 s` IMA-ADPCM (`128 KB` -> `~58 KB` WAV) ping-pong RAM buffers, while Core 0 handles HTTP uploads and SPIFFS flushing asynchronously—**zero audio gaps between chunks**.
-* **Seamless Offline Mode & Failover**: If Wi-Fi drops, Cloud reachability fails, or **Offline Mode** is toggled (BtnA long press `> 1.5 s`), chunks seamlessly spill over to `2.8 MB` of internal **SPIFFS flash** (~48+ chunks) using energy-based **Voice Activity Detection (VAD)** to skip silence.
+* **Seamless Offline Mode & Failover**: If Wi-Fi drops, Cloud reachability fails, or **Offline Mode** is toggled (Side Button `BtnB` long press `> 1.5 s`), chunks seamlessly spill over to `2.8 MB` of internal **SPIFFS flash** (~48+ chunks) using energy-based **Voice Activity Detection (VAD)** to skip silence.
 * **Automatic Backfill Drain**: As soon as Wi-Fi and Cloud connectivity recover, Core 0 drains queued SPIFFS chunks to the server in chronological order before returning to sleep.
+* **Watch Face Mode & Brightness Studio**: Switch cleanly between **Audio Logger**, customizable **Watch Face** (4 styles: Digital Bold, Minimal Stealth, Analog+Digital, Retro 7-Seg; 6 accent colors; 12h/24h; 180° flip; optional pocket record-lock; custom label), and **Screen Off (Stealth)** via the physical Power button or Web Portal—plus a `10–100%` backlight brightness slider persisted in ESP32 NVS.
 * **Zero Hardcoded Credentials (NVS Provisioned)**: Boots safely into a local `M5-AudioLogger` SoftAP configuration portal (`http://192.168.4.1`) when unprovisioned, or accepts USB serial configuration (`WIFI:...`, `CLOUD:...`) via `configure_wifi.py`.
-* **Live On-Device Mini-Dashboard & Logs**: Serves live telemetry and recent device logs directly over LAN (`http://<device-ip>/`) with HTML escaping and non-echoing secret inputs.
+* **Live On-Device Studio & Logs**: Serves live display/watch face controls, telemetry, and recent device logs directly over LAN (`http://<device-ip>/`) with HTML escaping and non-echoing secret inputs.
 
 ### Self-Hosted Cloud Brain (`cloud/server.py`)
 * **DSP Audio Normalization + Gemini Transcription**: Applies DC offset removal, ~80 Hz high-pass filtering, and peak/RMS automatic gain control (AGC) in pure Python before transcribing speech with Gemini Flash (with automatic model fallback and `[SILENCE]` filtering).
@@ -142,10 +143,12 @@ uv run --with pyserial python3 configure_wifi.py logs
 
 | Button | Action | Behavior |
 | :--- | :--- | :--- |
-| **Front Button (`BtnA`)** | Short Press | Toggle Recording (**Start / Stop**) |
-| **Front Button (`BtnA`)** | Long Press (`> 1.5 s`) | Toggle **Offline SPIFFS Mode** (airplane / power-save mode) |
+| **Front Button (`BtnA`)** | Short Press | Toggle Recording (**Start / Stop**) *(can be pocket-locked in Watch Face mode)* |
 | **Side Button (`BtnB`)** | Short Press | Trigger **On-Demand Daily Summary & Email Briefing** |
-| **Side Button (`BtnB`)** | Long Press (`> 1.5 s`) | Start temporary **3-min Wi-Fi / Cloud Setup Portal** |
+| **Side Button (`BtnB`)** | Long Press (`> 1.5 s`) | Toggle **Offline SPIFFS Mode** (airplane / power-save mode) |
+| **Bottom-Left Power (`AXP192`)** | Short Tap | Cycle Screen Mode (**Audio Logger → Watch Face → Screen Off**) |
+| **Bottom-Left Power (`AXP192`)** | Hold (`~1 s`) | Cycle Screen Brightness (**40% → 65% → 85% → 100%**) |
+| **Bottom-Left Power (`AXP192`)** | Hold (`> 4 s`) | Hardware Power Off |
 
 ---
 

@@ -11,7 +11,9 @@
 | **Email Daily Summary Now** | Short-press **Side Button (`BtnB`)** | Queues async Gemini synthesis + emails your configured recipient with both the **full verbatim transcript inline** and an attached `transcript_YYYY-MM-DD.txt` file. |
 | **Smart 9:00 PM Auto-Email** | Automatic (`21:00` local TZ) | Sends at 9:00 PM **only if** there are speech recordings today **and** new recordings have arrived since any manual email you sent earlier that day (never sends empty or duplicate emails). |
 | **Toggle Offline / Online Mode** | Hold **Side Button (`BtnB`)** for 1.5s | Switches between `ONLINE` (live Wi-Fi upload) and `OFFLINE` (on-device VAD + 4-bit ADPCM flash buffering). Switching back to `ONLINE` automatically offloads & deletes queued files. |
-| **Smart Power & Screen Dimming** | Automatic via AXP192 VBUS | When **plugged into USB-C power (`USB 100%`)**, the screen **never dims**. When running **unplugged on internal battery**, the screen automatically dims after 15 seconds to save battery (and wakes immediately if you press any button or plug in USB power). |
+| **Cycle Watch Face / Screen Mode** | Short-tap **Bottom-Left Power Button** | Cycles Screen Mode between **Audio Logger**, customizable **Watch Face**, and **Screen Off (Stealth)** (saved to NVS flash). |
+| **Cycle Screen Brightness** | Hold **Bottom-Left Power Button (~1 s)** | Cycles awake brightness (`40% -> 65% -> 85% -> 100%`) and saves to NVS flash (or use the `10–100%` slider on the Web Portal). Hold `> 4 s` to power off hardware. |
+| **Smart Power & Screen Dimming** | Automatic via AXP192 VBUS | When **plugged into USB-C power (`USB 100%`)**, the screen stays at your configured brightness. When running **unplugged on internal battery** with Auto-Dim enabled, the screen dims after 15 seconds to save battery (and wakes on any button press). |
 
 ---
 
@@ -76,5 +78,7 @@ When plugged into your computer via USB-C, the M5StickC Plus accepts these comma
 * `OFFLOAD` — Forces immediate upload & deletion of any queued `/q_*.adpcm` offline clips.
 * `SUMMARY` — Triggers an immediate Gemini summary & email to your configured recipient.
 * `SCAN` — Scans nearby 2.4 GHz Wi-Fi networks.
+* `BRIGHT:<10..100>` — Sets screen brightness percent and persists to NVS flash.
+* `MODE:<0|1|2>` — Switches screen mode (`0` = Audio Logger, `1` = Watch Face, `2` = Screen Off) and persists to NVS flash.
 * `WIFI:<ssid>:<password>` — Saves new Wi-Fi credentials to NVS flash and connects.
 * `CLOUD:<host>:<port>:<token>` — Saves Cloud Server host, port, and `X-Device-Token` to NVS flash and tests `/api/ping`.
